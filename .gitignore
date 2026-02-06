@@ -8,6 +8,8 @@ __pycache__/
 *.pyc
 *.pyo
 .venv/
+.ruff_cache/
+.pytest_cache/
 
 # IDE
 .idea/
