@@ -32,3 +32,8 @@ serve_image = (
     )
     .pip_install("vllm>=0.7")
 )
+
+ui_image = modal.Image.debian_slim(python_version="3.13").pip_install(
+    "gradio>=5.0",
+    "openai>=1.0",
+)
