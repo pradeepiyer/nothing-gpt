@@ -17,8 +17,8 @@ uv sync
 ### Modal secrets
 
 ```bash
-modal secret create huggingface-secret HF_TOKEN=<your-token>
-modal secret create wandb-secret WANDB_API_KEY=<your-key>
+uv run modal secret create huggingface-secret HF_TOKEN=<your-token>
+uv run modal secret create wandb-secret WANDB_API_KEY=<your-key>
 ```
 
 ## Usage
@@ -34,13 +34,13 @@ This downloads the Kaggle dataset, parses dialogues, and produces `data/training
 ### 2. Upload data to Modal
 
 ```bash
-modal volume put nothing-gpt-vol data/training/ /data/
+uv run modal volume put nothing-gpt-vol data/training/ /data/
 ```
 
 ### 3. Train
 
 ```bash
-modal run -m src.nothing_gpt.modal.train
+uv run modal run -m src.nothing_gpt.modal.train
 ```
 
 Runs QLoRA fine-tuning (~3 epochs on ~40K examples). Adapter saved to the shared Modal volume.
@@ -48,7 +48,7 @@ Runs QLoRA fine-tuning (~3 epochs on ~40K examples). Adapter saved to the shared
 ### 4. Deploy
 
 ```bash
-modal deploy -m src.nothing_gpt.modal.serve
+uv run modal deploy -m src.nothing_gpt.modal.serve
 ```
 
 ### 5. Chat
