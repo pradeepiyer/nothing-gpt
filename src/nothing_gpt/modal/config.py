@@ -4,7 +4,7 @@ import modal
 
 BASE_MODEL = "meta-llama/Llama-3.2-3B-Instruct"
 ADAPTER_PATH = "/vol/adapters/seinfeld"
-DATA_PATH = "/data"
+DATA_PATH = "/vol/data"
 
 app = modal.App("nothing-gpt")
 

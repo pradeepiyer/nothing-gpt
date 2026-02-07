@@ -25,8 +25,8 @@ LORA_CONFIG = json.dumps({
     volumes=VOLUMES,
     timeout=600,
     secrets=[modal.Secret.from_name("huggingface-secret")],
-    allow_concurrent_inputs=32,
 )
+@modal.concurrent(max_inputs=32)
 @modal.web_server(port=8000, startup_timeout=600)
 def serve() -> None:
     cmd = [

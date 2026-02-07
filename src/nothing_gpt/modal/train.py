@@ -59,7 +59,7 @@ def train() -> None:
 
     sft_config = SFTConfig(
         output_dir="/vol/checkpoints/seinfeld",
-        max_seq_length=2048,
+        max_length=2048,
         num_train_epochs=3,
         learning_rate=2e-4,
         lr_scheduler_type="cosine",
@@ -73,7 +73,7 @@ def train() -> None:
         eval_steps=100,
         save_strategy="steps",
         save_steps=200,
-        warmup_ratio=0.05,
+        warmup_steps=300,
         report_to="wandb",
         run_name="nothing-gpt-seinfeld",
         model_init_kwargs={
