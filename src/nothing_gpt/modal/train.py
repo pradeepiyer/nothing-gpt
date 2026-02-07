@@ -22,7 +22,7 @@ VOLUMES = {
     image=train_image,
     gpu="T4",
     volumes=VOLUMES,
-    timeout=7200,
+    timeout=28800,
     secrets=[
         modal.Secret.from_name("huggingface-secret"),
         modal.Secret.from_name("wandb-secret"),
