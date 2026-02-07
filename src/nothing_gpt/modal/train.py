@@ -29,10 +29,16 @@ VOLUMES = {
     ],
 )
 def train() -> None:
+    import os
+
     from datasets import load_dataset  # type: ignore[import-not-found]
     from peft import LoraConfig  # type: ignore[import-not-found]
-    from transformers import BitsAndBytesConfig  # type: ignore[import-not-found]
+    from transformers import BitsAndBytesConfig, TrainerCallback  # type: ignore[import-not-found]
     from trl import SFTConfig, SFTTrainer  # type: ignore[import-not-found]
+
+    class VolumeCommitCallback(TrainerCallback):  # type: ignore[misc]
+        def on_save(self, args, state, control, **kwargs) -> None:  # noqa: ANN001, ANN003
+            vol.commit()
 
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
@@ -87,9 +93,17 @@ def train() -> None:
         train_dataset=dataset["train"],
         eval_dataset=dataset["validation"],
         peft_config=lora_config,
+        callbacks=[VolumeCommitCallback()],
     )
 
-    trainer.train()
+    checkpoint_dir = sft_config.output_dir
+    checkpoints = sorted(
+        (d for d in os.listdir(checkpoint_dir) if d.startswith("checkpoint-")),
+        key=lambda d: int(d.split("-")[1]),
+    ) if os.path.exists(checkpoint_dir) else []
+    resume_from = os.path.join(checkpoint_dir, checkpoints[-1]) if checkpoints else None
+
+    trainer.train(resume_from_checkpoint=resume_from)
 
     # Save adapter
     trainer.save_model(ADAPTER_PATH)
