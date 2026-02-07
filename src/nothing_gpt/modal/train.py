@@ -43,7 +43,7 @@ def train() -> None:
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype="bfloat16",
+        bnb_4bit_compute_dtype="float16",
         bnb_4bit_use_double_quant=True,
     )
 
@@ -65,21 +65,22 @@ def train() -> None:
 
     sft_config = SFTConfig(
         output_dir="/vol/checkpoints/seinfeld",
-        max_length=2048,
+        max_length=512,
+        packing=True,
         num_train_epochs=3,
         learning_rate=2e-4,
         lr_scheduler_type="cosine",
         per_device_train_batch_size=4,
         gradient_accumulation_steps=4,
-        bf16=True,
+        fp16=True,
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
         logging_steps=10,
         eval_strategy="steps",
-        eval_steps=100,
+        eval_steps=500,
         save_strategy="steps",
-        save_steps=200,
-        warmup_steps=300,
+        save_steps=500,
+        warmup_steps=100,
         report_to="wandb",
         run_name="nothing-gpt-seinfeld",
         model_init_kwargs={
