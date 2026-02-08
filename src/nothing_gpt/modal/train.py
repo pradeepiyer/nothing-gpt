@@ -67,12 +67,12 @@ def train() -> None:
     )
 
     sft_config = SFTConfig(
-        output_dir="/vol/checkpoints/nothing-gpt",
-        max_length=2048,
+        output_dir="/vol/checkpoints/nothing-gpt-multiturn",
+        max_length=1024,
         num_train_epochs=3,
         learning_rate=2e-4,
         lr_scheduler_type="cosine",
-        per_device_train_batch_size=2,
+        per_device_train_batch_size=4,
         gradient_accumulation_steps=4,
         fp16=True,
         gradient_checkpointing=True,
