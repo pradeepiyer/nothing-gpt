@@ -15,7 +15,6 @@ VOLUMES = {
 LORA_CONFIG = json.dumps({
     "name": "seinfeld",
     "path": ADAPTER_PATH,
-    "local_path": ADAPTER_PATH,
 })
 
 
@@ -36,6 +35,7 @@ def serve() -> None:
         "--port", "8000",
         "--max-model-len", "2048",
         "--enable-lora",
+        "--max-lora-rank", "32",
         "--lora-modules", LORA_CONFIG,
         "--dtype", "half",
     ]
