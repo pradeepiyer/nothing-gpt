@@ -101,6 +101,10 @@ def train() -> None:
         callbacks=[VolumeCommitCallback()],
     )
 
+    for param in trainer.model.parameters():
+        if param.requires_grad and param.dtype == torch.bfloat16:
+            param.data = param.data.to(torch.float16)
+
     checkpoint_dir = sft_config.output_dir
     checkpoints = sorted(
         (d for d in os.listdir(checkpoint_dir) if d.startswith("checkpoint-")),
