@@ -48,8 +48,8 @@ def train() -> None:
     )
 
     lora_config = LoraConfig(
-        r=16,
-        lora_alpha=16,
+        r=32,
+        lora_alpha=32,
         lora_dropout=0.05,
         target_modules="all-linear",
         task_type="CAUSAL_LM",
@@ -66,7 +66,7 @@ def train() -> None:
     sft_config = SFTConfig(
         output_dir="/vol/checkpoints/seinfeld",
         max_length=512,
-        num_train_epochs=3,
+        num_train_epochs=1,
         learning_rate=2e-4,
         lr_scheduler_type="cosine",
         per_device_train_batch_size=4,
@@ -79,9 +79,11 @@ def train() -> None:
         eval_steps=500,
         save_strategy="steps",
         save_steps=500,
+        load_best_model_at_end=True,
+        metric_for_best_model="eval_loss",
         warmup_steps=200,
         report_to="wandb",
-        run_name="nothing-gpt-seinfeld",
+        run_name="nothing-gpt-r32",
         model_init_kwargs={
             "quantization_config": bnb_config,
         },
