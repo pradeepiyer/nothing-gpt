@@ -90,4 +90,4 @@ def ui() -> None:
         )
         gr.ChatInterface(fn=respond, additional_inputs=[character])
 
-    demo.launch(server_name="0.0.0.0", server_port=8000)
+    demo.launch(server_name="0.0.0.0", server_port=8000, prevent_thread_lock=True)
