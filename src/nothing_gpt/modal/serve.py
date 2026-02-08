@@ -95,7 +95,6 @@ def ui() -> None:
     demo = gr.ChatInterface(
         fn=respond,
         title="Nothing-GPT",
-        description="It's a chat about nothing.",
         chatbot=gr.Chatbot(
             placeholder="<strong>Nothing-GPT</strong><br>Pick a character and say something.",
             height=550,
@@ -106,12 +105,6 @@ def ui() -> None:
             container=False,
             scale=7,
         ),
-        examples=[
-            ["What's the deal with airline food?", "Jerry Seinfeld"],
-            ["I think I need to break up with someone.", "George Costanza"],
-            ["I just had the worst day at work.", "Elaine Benes"],
-            ["Do you want to grab coffee at Monk's?", "Cosmo Kramer"],
-        ],
         additional_inputs=[
             gr.Radio(
                 choices=list(CHARACTERS.keys()),
@@ -119,6 +112,7 @@ def ui() -> None:
                 label="Character",
             ),
         ],
+        additional_inputs_accordion=gr.Accordion(label="", open=True),
         theme=gr.themes.Monochrome(),
     )
     demo.launch(server_name="0.0.0.0", server_port=8000, prevent_thread_lock=True)
