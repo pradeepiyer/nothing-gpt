@@ -31,6 +31,8 @@ VOLUMES = {
 def train() -> None:
     import os
 
+    import torch  # type: ignore[import-not-found]
+
     from datasets import load_dataset  # type: ignore[import-not-found]
     from peft import LoraConfig  # type: ignore[import-not-found]
     from transformers import BitsAndBytesConfig, TrainerCallback  # type: ignore[import-not-found]
@@ -86,7 +88,7 @@ def train() -> None:
         run_name="nothing-gpt-r32",
         model_init_kwargs={
             "quantization_config": bnb_config,
-            "torch_dtype": "float16",
+            "torch_dtype": torch.float16,
         },
     )
 
