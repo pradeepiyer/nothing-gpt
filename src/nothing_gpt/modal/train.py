@@ -102,8 +102,8 @@ def train() -> None:
     )
 
     for param in trainer.model.parameters():
-        if param.requires_grad and param.dtype == torch.bfloat16:
-            param.data = param.data.to(torch.float16)
+        if param.requires_grad and param.dtype != torch.float32:
+            param.data = param.data.to(torch.float32)
 
     checkpoint_dir = sft_config.output_dir
     checkpoints = sorted(
