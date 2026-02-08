@@ -33,11 +33,14 @@ def serve() -> None:
         "--model", BASE_MODEL,
         "--host", "0.0.0.0",
         "--port", "8000",
-        "--max-model-len", "2048",
+        "--max-model-len", "512",
         "--enable-lora",
         "--max-lora-rank", "32",
         "--lora-modules", LORA_CONFIG,
         "--dtype", "half",
+        "--max-num-seqs", "32",
+        "--gpu-memory-utilization", "0.95",
+        "--enforce-eager",
     ]
     subprocess.Popen(cmd)
 
