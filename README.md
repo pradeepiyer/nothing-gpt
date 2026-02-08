@@ -47,8 +47,12 @@ Runs QLoRA fine-tuning (~3 epochs on ~40K examples). Adapter saved to the shared
 
 ### 4. Deploy
 
+Serve, train, and UI are independent Modal apps. Deploy them separately:
+
 ```bash
 uv run modal deploy -m src.nothing_gpt.modal.serve
+uv run modal deploy -m src.nothing_gpt.modal.train
+uv run modal deploy -m src.nothing_gpt.modal.ui
 ```
 
 ### 5. Chat
@@ -92,9 +96,10 @@ src/nothing_gpt/
     parse.py                     # CSV → episode dialogue sequences
     format.py                    # Dialogue → prompt-completion JSONL
   modal/
-    config.py                    # App, volumes, images, constants
+    config.py                    # Volumes, images, constants
     train.py                     # QLoRA training
     serve.py                     # vLLM serving
+    ui.py                        # Gradio chat UI
 scripts/run_etl.py               # Full data pipeline
 tests/
   test_parse.py                  # 19 tests

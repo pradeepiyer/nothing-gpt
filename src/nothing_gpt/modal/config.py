@@ -6,8 +6,6 @@ BASE_MODEL = "meta-llama/Llama-3.2-3B-Instruct"
 ADAPTER_PATH = "/vol/adapters/nothing-gpt"
 DATA_PATH = "/vol/data"
 
-app = modal.App("nothing-gpt")
-
 vol = modal.Volume.from_name("nothing-gpt-vol", create_if_missing=True)
 hf_cache = modal.Volume.from_name("huggingface-cache", create_if_missing=True)
 

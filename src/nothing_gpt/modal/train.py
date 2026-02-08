@@ -6,11 +6,12 @@ from .config import (
     ADAPTER_PATH,
     BASE_MODEL,
     DATA_PATH,
-    app,
     hf_cache,
     train_image,
     vol,
 )
+
+app = modal.App("nothing-gpt-train")
 
 VOLUMES = {
     "/vol": vol,
