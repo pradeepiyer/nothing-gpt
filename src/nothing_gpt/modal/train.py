@@ -21,9 +21,9 @@ VOLUMES = {
 
 @app.function(
     image=train_image,
-    gpu="T4",
+    gpu="L4",
     volumes=VOLUMES,
-    timeout=60000,
+    timeout=120000,
     secrets=[
         modal.Secret.from_name("huggingface-secret"),
         modal.Secret.from_name("wandb-secret"),
@@ -46,7 +46,7 @@ def train() -> None:
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype="float16",
+        bnb_4bit_compute_dtype="bfloat16",
         bnb_4bit_use_double_quant=True,
     )
 
@@ -69,14 +69,12 @@ def train() -> None:
     sft_config = SFTConfig(
         output_dir="/vol/checkpoints/nothing-gpt-multiturn",
         max_length=1024,
-        num_train_epochs=3,
+        num_train_epochs=2,
         learning_rate=2e-4,
         lr_scheduler_type="cosine",
-        per_device_train_batch_size=4,
-        gradient_accumulation_steps=4,
-        fp16=True,
-        gradient_checkpointing=True,
-        gradient_checkpointing_kwargs={"use_reentrant": False},
+        per_device_train_batch_size=8,
+        gradient_accumulation_steps=2,
+        bf16=True,
         logging_steps=10,
         eval_strategy="steps",
         eval_steps=200,
@@ -89,7 +87,7 @@ def train() -> None:
         run_name="nothing-gpt-multiturn",
         model_init_kwargs={
             "quantization_config": bnb_config,
-            "torch_dtype": torch.float16,
+            "torch_dtype": torch.bfloat16,
         },
     )
 
@@ -101,10 +99,6 @@ def train() -> None:
         peft_config=lora_config,
         callbacks=[VolumeCommitCallback()],
     )
-
-    for param in trainer.model.parameters():
-        if param.requires_grad and param.dtype != torch.float32:
-            param.data = param.data.to(torch.float32)
 
     checkpoint_dir = sft_config.output_dir
     checkpoints = sorted(
