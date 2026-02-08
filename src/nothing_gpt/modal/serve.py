@@ -24,6 +24,7 @@ LORA_CONFIG = json.dumps({
     volumes=VOLUMES,
     timeout=600,
     scaledown_window=900,
+    max_containers=1,
     secrets=[modal.Secret.from_name("huggingface-secret")],
 )
 @modal.concurrent(max_inputs=32)
@@ -34,7 +35,7 @@ def serve() -> None:
         "--model", BASE_MODEL,
         "--host", "0.0.0.0",
         "--port", "8000",
-        "--max-model-len", "512",
+        "--max-model-len", "1024",
         "--enable-lora",
         "--max-lora-rank", "32",
         "--lora-modules", LORA_CONFIG,
@@ -81,6 +82,7 @@ def ui() -> None:
         try:
             response = client.chat.completions.create(
                 model="seinfeld", messages=messages, stream=True,
+                max_tokens=256,
             )
             partial = ""
             for chunk in response:
