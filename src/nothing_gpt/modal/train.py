@@ -86,6 +86,7 @@ def train() -> None:
         run_name="nothing-gpt-r32",
         model_init_kwargs={
             "quantization_config": bnb_config,
+            "torch_dtype": "float16",
         },
     )
 
