@@ -61,7 +61,7 @@ def ui() -> None:
     import gradio as gr  # type: ignore[import-not-found]
     from openai import OpenAI  # type: ignore[import-not-found]
 
-    client = OpenAI(base_url=SERVE_URL, api_key="not-needed")
+    client = OpenAI(base_url=SERVE_URL, api_key="not-needed", timeout=300)
 
     def respond(
         message: str,
