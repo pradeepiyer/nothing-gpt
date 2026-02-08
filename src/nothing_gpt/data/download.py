@@ -1,4 +1,4 @@
-"""Download Seinfeld scripts dataset from Kaggle."""
+"""Download scripts dataset from Kaggle."""
 
 import shutil
 from pathlib import Path
@@ -10,7 +10,7 @@ RAW_DIR = Path(__file__).parent.parent.parent.parent / "data" / "raw"
 
 
 def download(output_dir: Path = RAW_DIR) -> Path:
-    """Download the Seinfeld scripts CSV from Kaggle and copy to output_dir."""
+    """Download the scripts CSV from Kaggle and copy to output_dir."""
     dataset_path = Path(kagglehub.dataset_download(DATASET))
     output_dir.mkdir(parents=True, exist_ok=True)
 

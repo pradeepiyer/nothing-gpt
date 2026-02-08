@@ -1,4 +1,4 @@
-"""QLoRA fine-tuning of Llama 3.2 on Seinfeld dialogue via Modal."""
+"""QLoRA fine-tuning of Llama 3.2 via Modal."""
 
 import modal
 
@@ -66,7 +66,7 @@ def train() -> None:
     )
 
     sft_config = SFTConfig(
-        output_dir="/vol/checkpoints/seinfeld",
+        output_dir="/vol/checkpoints/nothing-gpt",
         max_length=512,
         num_train_epochs=1,
         learning_rate=2e-4,

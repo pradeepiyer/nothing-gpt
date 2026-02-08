@@ -1,10 +1,10 @@
 # Nothing-GPT
 
-Chat with Seinfeld characters (Jerry, George, Elaine, Kramer) powered by a fine-tuned Llama 3.2 3B Instruct model.
+Chat with Jerry, George, Elaine, and Kramer powered by a fine-tuned Llama 3.2 3B Instruct model.
 
 ## How it works
 
-1. **Data**: Seinfeld scripts from Kaggle, parsed into dialogue turns per episode
+1. **Data**: TV scripts from Kaggle, parsed into dialogue turns per episode
 2. **Training**: QLoRA fine-tuning via TRL SFTTrainer on Modal (T4 GPU). One model serves all characters — system prompts in the training data differentiate character voices.
 3. **Serving**: vLLM on Modal with LoRA adapter, OpenAI-compatible API
 

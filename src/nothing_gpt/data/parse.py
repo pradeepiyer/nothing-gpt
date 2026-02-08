@@ -1,4 +1,4 @@
-"""Parse Seinfeld scripts CSV into structured dialogue sequences per episode."""
+"""Parse scripts CSV into structured dialogue sequences per episode."""
 
 import json
 import re
@@ -68,7 +68,7 @@ def clean_dialogue(text: str) -> str:
 
 
 def parse_csv(csv_path: Path = RAW_DIR / "scripts.csv") -> list[Episode]:
-    """Parse the Seinfeld scripts CSV into episode dialogue sequences."""
+    """Parse the scripts CSV into episode dialogue sequences."""
     df = pd.read_csv(csv_path)
 
     # Expected columns: Character, Dialogue, EpisodeNo, SEID, Season
