@@ -34,6 +34,7 @@ serve_image = (
 )
 
 ui_image = modal.Image.debian_slim(python_version="3.13").pip_install(
-    "gradio>=5.0",
+    "gradio~=5.7.1",
+    "requests",
     "openai>=1.0",
 )

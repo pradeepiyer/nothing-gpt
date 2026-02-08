@@ -23,6 +23,7 @@ LORA_CONFIG = json.dumps({
     gpu="T4",
     volumes=VOLUMES,
     timeout=600,
+    scaledown_window=900,
     secrets=[modal.Secret.from_name("huggingface-secret")],
 )
 @modal.concurrent(max_inputs=32)
@@ -55,7 +56,8 @@ CHARACTERS = {
 SERVE_URL = "https://pradeepiyer--nothing-gpt-serve.modal.run/v1"
 
 
-@app.function(image=ui_image)
+@app.function(image=ui_image, timeout=3600)
+@modal.concurrent(max_inputs=32)
 @modal.web_server(port=8000, startup_timeout=120)
 def ui() -> None:
     import gradio as gr  # type: ignore[import-not-found]
@@ -65,15 +67,18 @@ def ui() -> None:
 
     def respond(
         message: str,
-        history: list[dict[str, str]],
+        history: list[list[str | None]],
         character: str,
     ):  # type: ignore[no-untyped-def]
-        try:
-            messages = [{"role": "system", "content": CHARACTERS[character]}]
-            for turn in history:
-                messages.append({"role": turn["role"], "content": turn["content"]})
-            messages.append({"role": "user", "content": message})
+        messages = [{"role": "system", "content": CHARACTERS[character]}]
+        for user_msg, assistant_msg in history:
+            if user_msg:
+                messages.append({"role": "user", "content": user_msg})
+            if assistant_msg:
+                messages.append({"role": "assistant", "content": assistant_msg})
+        messages.append({"role": "user", "content": message})
 
+        try:
             response = client.chat.completions.create(
                 model="seinfeld", messages=messages, stream=True,
             )
@@ -83,14 +88,17 @@ def ui() -> None:
                     partial += chunk.choices[0].delta.content
                     yield partial
         except Exception as e:
-            yield f"Error: {type(e).__name__}: {e}"
+            yield f"Error: {e}"
 
-    with gr.Blocks(title="Nothing-GPT") as demo:
-        character = gr.Dropdown(
-            choices=list(CHARACTERS.keys()),
-            value="Jerry Seinfeld",
-            label="Character",
-        )
-        gr.ChatInterface(fn=respond, additional_inputs=[character])
-
+    demo = gr.ChatInterface(
+        fn=respond,
+        title="Nothing-GPT",
+        additional_inputs=[
+            gr.Dropdown(
+                choices=list(CHARACTERS.keys()),
+                value="Jerry Seinfeld",
+                label="Character",
+            ),
+        ],
+    )
     demo.launch(server_name="0.0.0.0", server_port=8000, prevent_thread_lock=True)
