@@ -39,7 +39,7 @@ def serve() -> None:
         "--port", "8000",
         "--max-model-len", "1024",
         "--enable-lora",
-        "--max-lora-rank", "32",
+        "--max-lora-rank", "64",
         "--lora-modules", LORA_CONFIG,
         "--dtype", "half",
         "--max-num-seqs", "32",

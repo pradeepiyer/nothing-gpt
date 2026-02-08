@@ -51,8 +51,8 @@ def train() -> None:
     )
 
     lora_config = LoraConfig(
-        r=32,
-        lora_alpha=32,
+        r=64,
+        lora_alpha=128,
         lora_dropout=0.05,
         target_modules="all-linear",
         task_type="CAUSAL_LM",
@@ -70,7 +70,7 @@ def train() -> None:
         output_dir="/vol/checkpoints/nothing-gpt-multiturn",
         max_length=1024,
         num_train_epochs=2,
-        learning_rate=2e-4,
+        learning_rate=1e-4,
         lr_scheduler_type="cosine",
         per_device_train_batch_size=8,
         gradient_accumulation_steps=2,

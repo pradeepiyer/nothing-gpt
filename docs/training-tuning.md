@@ -25,13 +25,13 @@ These parameters control the adapter architecture — the trainable part of the 
 
 | Parameter | Current Value | What It Does | Alternatives |
 |-----------|--------------|--------------|--------------|
-| `r` | `32` | Rank of the low-rank matrices. Higher = more capacity, more VRAM, slower training | `16` — plateaued at eval_loss 2.585; `64` — feasible on L4 |
-| `lora_alpha` | `32` | Scaling factor. Effective scaling is `alpha/r` (currently 1.0) | `64` (ratio 2.0) — amplifies adapter contribution without adding parameters |
+| `r` | `64` | Rank of the low-rank matrices. Higher = more capacity, more VRAM, slower training | `16` — plateaued at eval_loss 2.585; `32` — eval_loss 2.542 |
+| `lora_alpha` | `128` | Scaling factor. Effective scaling is `alpha/r` (currently 2.0) | `64` (ratio 1.0) — more conservative scaling |
 | `lora_dropout` | `0.05` | Dropout on LoRA layers for regularization | `0.0` — faster, risk of overfitting; `0.1` — more regularization |
 | `target_modules` | `"all-linear"` | Which layers get LoRA adapters | Specific names like `["q_proj", "v_proj"]` — fewer trainable params but less expressive |
 | `task_type` | `"CAUSAL_LM"` | Tells PEFT the model architecture type | No alternatives for this use case |
 
-**Guidance**: `r=32` was chosen after `r=16` showed capacity limitations. The alpha/rank ratio of 1.0 is conservative — increasing alpha to 64 would amplify adapter contributions without increasing parameter count.
+**Guidance**: `r=64` was chosen after `r=16` (eval_loss 2.585) and `r=32` (eval_loss 2.542) showed incremental gains with higher rank. The alpha/rank ratio of 2.0 amplifies adapter contributions; the learning rate is halved to `1e-4` to keep the effective update magnitude constant (`lr × alpha/r = 1e-4 × 2.0 = 2e-4`).
 
 ## Training Loop — `SFTConfig`
 
@@ -47,7 +47,7 @@ These parameters control the adapter architecture — the trainable part of the 
 |-----------|--------------|--------------|--------------|
 | `per_device_train_batch_size` | `8` | Micro-batch size per GPU | `4` — halves VRAM per micro-batch; `16` — may OOM |
 | `gradient_accumulation_steps` | `2` | Accumulate gradients over N micro-batches before updating | `1` — effective batch 8, noisier; `4` — effective batch 32, smoother but slower |
-| `learning_rate` | `2e-4` | Peak learning rate | `1e-4` — more conservative; `3e-4` — more aggressive, risk of instability |
+| `learning_rate` | `1e-4` | Peak learning rate. Halved from 2e-4 to compensate for alpha/r ratio of 2.0 | `2e-4` — with alpha/r=1.0; `3e-4` — more aggressive, risk of instability |
 | `lr_scheduler_type` | `"cosine"` | How the learning rate decays over training | `"cosine_with_restarts"` — can escape local minima; `"linear"` — simpler decay curve |
 | `warmup_steps` | `200` | Steps of linear LR warmup from 0 to peak | `100` — faster ramp; `500` — more conservative warmup |
 | `num_train_epochs` | `2` | Number of passes through the training data | `1` — best checkpoint was at epoch 0.94; `3` — risk of overfitting |
@@ -147,15 +147,15 @@ Impact: High | Cost: None
 
 The best checkpoint was at epoch 0.94. Training beyond 1 epoch showed no improvement with r=32. Set `num_train_epochs=1` to save compute and avoid overfitting. The r=16 run confirmed overfitting by epoch 1.2.
 
-**2. Increase LoRA Rank (r=32 → 64)**
+**2. Increase LoRA Rank (r=64 → 128)**
 Impact: High | Cost: More VRAM
 
-More rank = more adapter capacity. The jump from r=16 to r=32 improved eval loss from 2.585 to 2.542. r=64 is feasible on L4 and may help further.
+More rank = more adapter capacity. The progression from r=16 (2.585) to r=32 (2.542) showed gains with higher rank. r=64 is the current setting; r=128 is feasible on L4 but with less VRAM headroom.
 
-**3. Increase Alpha/Rank Ratio (alpha=64, keep r=32)**
+**3. Adjust Alpha/Rank Ratio**
 Impact: Medium | Cost: None
 
-The effective LoRA scaling is `alpha/r`. Currently 1.0. Bumping alpha to 64 (ratio 2.0) amplifies the adapter's contribution without increasing parameter count.
+The effective LoRA scaling is `alpha/r`. Currently 2.0 (128/64). Reducing to 1.0 would make the adapter more conservative; increasing further risks instability.
 
 **4. Cosine with Warm Restarts**
 Impact: Medium | Cost: None
