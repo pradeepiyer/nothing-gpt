@@ -56,7 +56,7 @@ SERVE_URL = "https://pradeepiyer--nothing-gpt-serve.modal.run/v1"
 
 
 @app.function(image=ui_image)
-@modal.web_server(port=8000, startup_timeout=30)
+@modal.web_server(port=8000, startup_timeout=120)
 def ui() -> None:
     import gradio as gr  # type: ignore[import-not-found]
     from openai import OpenAI  # type: ignore[import-not-found]
