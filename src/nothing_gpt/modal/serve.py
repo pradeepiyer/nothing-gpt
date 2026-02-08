@@ -68,15 +68,12 @@ def ui() -> None:
 
     def respond(
         message: str,
-        history: list[list[str | None]],
+        history: list[dict[str, str]],
         character: str,
     ):  # type: ignore[no-untyped-def]
         messages = [{"role": "system", "content": CHARACTERS[character]}]
-        for user_msg, assistant_msg in history:
-            if user_msg:
-                messages.append({"role": "user", "content": user_msg})
-            if assistant_msg:
-                messages.append({"role": "assistant", "content": assistant_msg})
+        for msg in history:
+            messages.append({"role": msg["role"], "content": msg["content"]})
         messages.append({"role": "user", "content": message})
 
         try:
@@ -99,6 +96,7 @@ def ui() -> None:
             placeholder="<strong>Nothing-GPT</strong><br>Pick a character and say something.",
             height=550,
             layout="bubble",
+            type="messages",
         ),
         textbox=gr.Textbox(
             placeholder="Say something to Jerry...",
