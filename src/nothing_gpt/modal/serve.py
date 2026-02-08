@@ -68,19 +68,22 @@ def ui() -> None:
         history: list[dict[str, str]],
         character: str,
     ):  # type: ignore[no-untyped-def]
-        messages = [{"role": "system", "content": CHARACTERS[character]}]
-        for turn in history:
-            messages.append({"role": turn["role"], "content": turn["content"]})
-        messages.append({"role": "user", "content": message})
+        try:
+            messages = [{"role": "system", "content": CHARACTERS[character]}]
+            for turn in history:
+                messages.append({"role": turn["role"], "content": turn["content"]})
+            messages.append({"role": "user", "content": message})
 
-        response = client.chat.completions.create(
-            model="seinfeld", messages=messages, stream=True,
-        )
-        partial = ""
-        for chunk in response:
-            if chunk.choices[0].delta.content:
-                partial += chunk.choices[0].delta.content
-                yield partial
+            response = client.chat.completions.create(
+                model="seinfeld", messages=messages, stream=True,
+            )
+            partial = ""
+            for chunk in response:
+                if chunk.choices[0].delta.content:
+                    partial += chunk.choices[0].delta.content
+                    yield partial
+        except Exception as e:
+            yield f"Error: {type(e).__name__}: {e}"
 
     with gr.Blocks(title="Nothing-GPT") as demo:
         character = gr.Dropdown(
