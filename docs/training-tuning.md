@@ -25,13 +25,13 @@ These parameters control the adapter architecture — the trainable part of the 
 
 | Parameter | Current Value | What It Does | Alternatives |
 |-----------|--------------|--------------|--------------|
-| `r` | `64` | Rank of the low-rank matrices. Higher = more capacity, more VRAM, slower training | `16` — eval_loss 2.585 (single-turn); `32` — eval_loss 2.542 (single-turn), 1.732 (multi-turn) |
+| `r` | `64` | Rank of the low-rank matrices. Higher = more capacity, more VRAM, slower training | `16` — eval_loss 2.585 (single-turn); `32` — eval_loss 1.732 (multi-turn); `64` — eval_loss 1.727 (multi-turn, marginal gain) |
 | `lora_alpha` | `128` | Scaling factor. Effective scaling is `alpha/r` (currently 2.0) | `64` (ratio 1.0) — more conservative scaling |
 | `lora_dropout` | `0.1` | Dropout on LoRA layers for regularization | `0.0` — faster, risk of overfitting; `0.05` — less regularization |
 | `target_modules` | `"all-linear"` | Which layers get LoRA adapters | Specific names like `["q_proj", "v_proj"]` — fewer trainable params but less expressive |
 | `task_type` | `"CAUSAL_LM"` | Tells PEFT the model architecture type | No alternatives for this use case |
 
-**Guidance**: `r=64` was chosen after `r=16` (eval_loss 2.585), `r=32` single-turn (eval_loss 2.542), and `r=32` multi-turn (eval_loss 1.732) showed that both higher rank and multi-turn data format improve quality. The alpha/rank ratio of 2.0 amplifies adapter contributions; the learning rate is halved to `1e-4` to keep the effective update magnitude constant (`lr × alpha/r = 1e-4 × 2.0 = 2e-4`). Dropout was increased from 0.05 to 0.1 because the r=32 multi-turn run began overfitting by epoch 0.47.
+**Guidance**: r=64 achieved eval_loss 1.727 vs r=32's 1.732 — a marginal 0.005 improvement despite ~4× more trainable parameters. The extra capacity mainly accelerated overfitting (train-eval gap of 0.97 by epoch 0.95 vs 0.31 for r=32 at epoch 0.47). r=32 is the sweet spot for this dataset. The alpha/rank ratio of 2.0 amplifies adapter contributions; the learning rate is halved to `1e-4` to keep the effective update magnitude constant (`lr × alpha/r = 1e-4 × 2.0 = 2e-4`). Dropout is 0.1 to help with overfitting.
 
 ## Training Loop — `SFTConfig`
 
@@ -52,7 +52,7 @@ These parameters control the adapter architecture — the trainable part of the 
 | `warmup_steps` | `200` | Steps of linear LR warmup from 0 to peak | `100` — faster ramp; `500` — more conservative warmup |
 | `num_train_epochs` | `1` | Number of passes through the training data | `2` — risk of overfitting (r=32 multi-turn peaked at epoch 0.24); `3` — severe overfitting |
 
-**Effective batch size** = `per_device_train_batch_size` × `gradient_accumulation_steps` = 8 × 2 = **16**.
+**Effective batch size** = `per_device_train_batch_size` × `gradient_accumulation_steps` = 4 × 4 = **16**.
 
 ### Memory Optimization
 
@@ -77,7 +77,7 @@ These parameters control the adapter architecture — the trainable part of the 
 |-----------|--------------|--------------|--------------|
 | `logging_steps` | `10` | Log training metrics every N steps | `1` — very verbose; `50` — less noise |
 | `report_to` | `"wandb"` | Send metrics to Weights & Biases | `"tensorboard"`, `"none"` |
-| `run_name` | `"nothing-gpt-multiturn"` | Name for the W&B run | Any descriptive string |
+| `run_name` | `"multiturn-r64"` | Name for the W&B run | Any descriptive string |
 
 ### Model Initialization
 
@@ -111,7 +111,7 @@ If the checkpoint directory exists and contains checkpoints, training resumes fr
 | Setting | Value | Why |
 |---------|-------|-----|
 | GPU | `"L4"` | 24 GB VRAM, native bf16 support, ~2× fp16 throughput vs T4 |
-| `timeout` | `120000` (~33 hours) | Conservative upper bound; 1 epoch on L4 should complete well within this |
+| `timeout` | `86400` (24 hours) | Modal maximum; 1 epoch on L4 completes in ~6 hours |
 
 ## Current Training Math
 
@@ -120,15 +120,24 @@ With the current configuration and dataset (13,482 training examples):
 | Metric | Value |
 |--------|-------|
 | Training examples | 13,482 |
-| Micro-batch size | 8 |
-| Gradient accumulation | 2 |
+| Micro-batch size | 4 |
+| Gradient accumulation | 4 |
 | Effective batch size | 16 |
 | Steps per epoch | 13,482 ÷ 16 ≈ **843** |
 | Total steps (1 epoch) | ~843 |
 | Eval/save frequency | Every 100 steps (~12% of an epoch) |
 | Warmup | 200 steps (~24% of epoch 1) |
 
-**Best result so far**: eval_loss **1.732** at checkpoint-200 (epoch 0.24), using r=32, alpha=32, multi-turn format, bf16, cosine schedule on L4. The multi-turn data format was the primary driver — the same r=32 config with single-turn format achieved only 2.542.
+**Best result so far**: eval_loss **1.727** at checkpoint-200 (epoch 0.24), using r=64, alpha=128, multi-turn format, bf16, cosine schedule on L4. Only marginally better than r=32's 1.732 — the multi-turn data format was the primary driver, not rank (single-turn r=32 achieved only 2.542).
+
+### All Runs
+
+| Run | Format | r | GPU/dtype | Best Eval Loss | Best Epoch |
+|-----|--------|---|-----------|---------------|------------|
+| r=16 | single-turn | 16 | T4/fp16 | 2.585 | ~0.9 |
+| r=32 | single-turn | 32 | T4/fp16 | 2.542 | 0.94 |
+| r=32 | multi-turn | 32 | L4/bf16 | 1.732 | 0.24 |
+| r=64 | multi-turn | 64 | L4/bf16 | **1.727** | 0.24 |
 
 ## Tuning Guide — If Loss Plateaus
 
@@ -148,9 +157,9 @@ Impact: High | Cost: None
 The best multi-turn checkpoint was at epoch 0.24 — overfitting started by epoch 0.47 (eval loss increased while train loss dropped). Even with single-turn format, the best checkpoint was at epoch 0.94. `num_train_epochs=1` is already set; going lower would require `max_steps` instead.
 
 **2. Increase LoRA Rank (r=64 → 128)**
-Impact: High | Cost: More VRAM
+Impact: Low | Cost: More VRAM
 
-More rank = more adapter capacity. The progression from r=16 (2.585) to r=32 (2.542) showed gains with higher rank. r=64 is the current setting; r=128 is feasible on L4 but with less VRAM headroom.
+Rank increases show diminishing returns: r=16→r=32 improved eval_loss by 0.043 (single-turn), and r=32→r=64 improved by only 0.005 (multi-turn). r=64 also required halving batch size to avoid OOM and overfit significantly faster. r=128 is unlikely to help and would further constrain batch size.
 
 **3. Adjust Alpha/Rank Ratio**
 Impact: Medium | Cost: None
@@ -190,6 +199,6 @@ Training and serving have different bottlenecks: training is compute-bound (TFLO
 
 ### What NOT to Do
 
-- **Don't increase epochs past 3** without evidence that eval loss is still declining at epoch boundary — dialogue data overfits fast
+- **Don't increase epochs past 1** — multi-turn data overfits by epoch 0.24–0.47 across both r=32 and r=64
 - **Don't reduce effective batch size below 8** — too noisy for stable convergence on this data size
 - **Don't chase train loss below eval loss** — that gap is overfitting, not progress
