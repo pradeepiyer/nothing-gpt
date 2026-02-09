@@ -22,7 +22,7 @@ LORA_CONFIG = json.dumps({
 
 @app.function(
     image=serve_image,
-    gpu="T4",
+    gpu="L4",
     volumes=VOLUMES,
     timeout=600,
     scaledown_window=900,
@@ -37,9 +37,9 @@ def serve() -> None:
         "--model", BASE_MODEL,
         "--host", "0.0.0.0",
         "--port", "8000",
-        "--max-model-len", "1024",
+        "--max-model-len", "2048",
         "--enable-lora",
-        "--max-lora-rank", "64",
+        "--max-lora-rank", "32",
         "--lora-modules", LORA_CONFIG,
         "--dtype", "half",
         "--max-num-seqs", "32",
