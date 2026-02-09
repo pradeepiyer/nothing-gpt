@@ -1,8 +1,12 @@
 """End-to-end evaluation orchestration."""
 
+from __future__ import annotations
+
 import argparse
 import json
 from pathlib import Path
+
+import wandb
 
 from nothing_gpt.eval.generate import (
     SERVE_URL,
@@ -13,6 +17,7 @@ from nothing_gpt.eval.generate import (
     save_responses,
 )
 from nothing_gpt.eval.judge import (
+    JudgeMetrics,
     compute_metrics,
     judge_responses,
     load_scores,
@@ -57,6 +62,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--skip-judge", action="store_true",
         help="Skip LLM judge scoring",
     )
+    parser.add_argument(
+        "--wandb", action="store_true", default=False,
+        help="Log metrics to Weights & Biases",
+    )
+    parser.add_argument(
+        "--no-wandb", action="store_false", dest="wandb",
+        help="Disable wandb logging (default)",
+    )
+    parser.add_argument(
+        "--wandb-project", type=str, default="nothing-gpt-eval",
+        help="wandb project name",
+    )
+    parser.add_argument(
+        "--wandb-run-name", type=str, default=None,
+        help="wandb run name (auto-generated if not set)",
+    )
     return parser.parse_args(argv)
 
 
@@ -64,6 +85,18 @@ def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     output_dir: Path = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.wandb:
+        wandb.init(
+            project=args.wandb_project,
+            name=args.wandb_run_name,
+            config={
+                "max_prompts": args.max_prompts,
+                "cross_character_count": args.cross_character_count,
+                "judge_count": args.judge_count,
+                "base_url": args.base_url,
+            },
+        )
 
     responses_path = output_dir / "responses.jsonl"
     cross_char_path = output_dir / "cross_character_responses.jsonl"
@@ -172,6 +205,39 @@ def main(argv: list[str] | None = None) -> None:
     with open(summary_path, "w") as f:
         json.dump(summary, f, indent=2)
     print(f"\nSummary saved to {summary_path}")
+
+    if args.wandb:
+        _log_to_wandb(quality, distinguishability)
+        wandb.finish()
+
+
+def _log_to_wandb(quality: JudgeMetrics, distinguishability: dict) -> None:
+    """Log eval metrics and tables to wandb."""
+    wandb.log({
+        "character_consistency": quality.mean_character_consistency,
+        "humor": quality.mean_humor,
+        "coherence": quality.mean_coherence,
+        "overall": quality.mean_overall,
+        "distinguishability": distinguishability["accuracy"],
+    })
+
+    quality_table = wandb.Table(
+        columns=["character", "character_consistency", "humor", "coherence", "overall"],
+    )
+    for char, means in sorted(quality.per_character.items()):
+        quality_table.add_data(
+            char,
+            means["character_consistency"],
+            means["humor"],
+            means["coherence"],
+            means["overall"],
+        )
+    wandb.log({"quality_per_character": quality_table})
+
+    dist_table = wandb.Table(columns=["character", "accuracy"])
+    for char, acc in sorted(distinguishability["per_character"].items()):
+        dist_table.add_data(char, acc)
+    wandb.log({"distinguishability_per_character": dist_table})
 
 
 def _compute_distinguishability(
