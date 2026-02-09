@@ -45,8 +45,8 @@ These parameters control the adapter architecture — the trainable part of the 
 
 | Parameter | Current Value | What It Does | Alternatives |
 |-----------|--------------|--------------|--------------|
-| `per_device_train_batch_size` | `8` | Micro-batch size per GPU | `4` — halves VRAM per micro-batch; `16` — may OOM |
-| `gradient_accumulation_steps` | `2` | Accumulate gradients over N micro-batches before updating | `1` — effective batch 8, noisier; `4` — effective batch 32, smoother but slower |
+| `per_device_train_batch_size` | `4` | Micro-batch size per GPU | `8` — OOM with r=64 on L4; `16` — OOM |
+| `gradient_accumulation_steps` | `4` | Accumulate gradients over N micro-batches before updating | `2` — effective batch 8, noisier; `1` — effective batch 4, very noisy |
 | `learning_rate` | `1e-4` | Peak learning rate. Halved from 2e-4 to compensate for alpha/r ratio of 2.0 | `2e-4` — with alpha/r=1.0; `3e-4` — more aggressive, risk of instability |
 | `lr_scheduler_type` | `"cosine"` | How the learning rate decays over training | `"cosine_with_restarts"` — can escape local minima; `"linear"` — simpler decay curve |
 | `warmup_steps` | `200` | Steps of linear LR warmup from 0 to peak | `100` — faster ramp; `500` — more conservative warmup |
