@@ -1,4 +1,4 @@
-"""Format parsed dialogue into prompt-completion training data for TRL SFTTrainer."""
+"""Format parsed dialogue into multi-turn conversation training data for TRL SFTTrainer."""
 
 import json
 import random
@@ -10,7 +10,9 @@ from nothing_gpt.data.parse import DialogueTurn, Episode
 PROCESSED_DIR = Path(__file__).parent.parent.parent.parent / "data" / "processed"
 TRAINING_DIR = Path(__file__).parent.parent.parent.parent / "data" / "training"
 
-CONTEXT_WINDOW = 8  # Max preceding turns to include as context
+MAX_MESSAGES = 20  # Max messages (user + assistant) per training example
+MIN_ASSISTANT_TURNS = 2  # Minimum assistant turns per example
+STRIDE = 5  # Sliding window stride
 VAL_RATIO = 0.1  # 10% of episodes for validation
 
 
@@ -35,40 +37,68 @@ def merge_consecutive_turns(turns: list[DialogueTurn]) -> list[DialogueTurn]:
     return merged
 
 
-def episode_to_examples(episode: Episode) -> list[dict]:
-    """Generate prompt-completion examples from an episode.
+def _turns_to_messages(
+    turns: list[DialogueTurn], character: str
+) -> list[dict[str, str]]:
+    """Convert dialogue turns to user/assistant messages for a target character.
 
-    For each main character's line, collect preceding turns as context
-    and format as a prompt-completion pair.
+    Consecutive non-target turns are merged into a single user message.
+    Target character turns become assistant messages.
+    """
+    messages: list[dict[str, str]] = []
+    pending_user_lines: list[str] = []
+
+    for turn in turns:
+        if turn.character == character:
+            if pending_user_lines:
+                messages.append({"role": "user", "content": "\n".join(pending_user_lines)})
+                pending_user_lines = []
+            messages.append({"role": "assistant", "content": turn.dialogue})
+        else:
+            pending_user_lines.append(f"[{turn.character}] {turn.dialogue}")
+
+    # Trailing user lines are dropped (no assistant response follows)
+    return messages
+
+
+def episode_to_examples(episode: Episode) -> list[dict]:
+    """Generate multi-turn conversation examples from an episode.
+
+    For each main character, convert the episode into alternating user/assistant
+    messages, then extract sliding windows.
     """
     turns = merge_consecutive_turns(episode.turns)
     examples: list[dict] = []
 
-    for i, turn in enumerate(turns):
-        if turn.character not in MAIN_CHARACTERS:
+    for character in MAIN_CHARACTERS:
+        messages = _turns_to_messages(turns, character)
+
+        if len(messages) < 2:
             continue
 
-        # Collect preceding context (up to CONTEXT_WINDOW turns)
-        start = max(0, i - CONTEXT_WINDOW)
-        context_turns = turns[start:i]
+        system_prompt = get_system_prompt(character)
 
-        # Skip if no context (first line in episode)
-        if not context_turns:
-            continue
+        # Sliding window over messages
+        start = 0
+        while start < len(messages):
+            window = messages[start : start + MAX_MESSAGES]
 
-        context_text = format_context(context_turns)
-        system_prompt = get_system_prompt(turn.character)
+            # Trim to start with user, end with assistant
+            while window and window[0]["role"] != "user":
+                window = window[1:]
+            while window and window[-1]["role"] != "assistant":
+                window = window[:-1]
 
-        example = {
-            "prompt": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": context_text},
-            ],
-            "completion": [
-                {"role": "assistant", "content": turn.dialogue},
-            ],
-        }
-        examples.append(example)
+            assistant_count = sum(1 for m in window if m["role"] == "assistant")
+            if len(window) >= 2 and assistant_count >= MIN_ASSISTANT_TURNS:
+                examples.append({
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        *window,
+                    ]
+                })
+
+            start += STRIDE
 
     return examples
 

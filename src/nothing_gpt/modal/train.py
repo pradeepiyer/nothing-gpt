@@ -21,9 +21,9 @@ VOLUMES = {
 
 @app.function(
     image=train_image,
-    gpu="T4",
+    gpu="L4",
     volumes=VOLUMES,
-    timeout=60000,
+    timeout=86400,
     secrets=[
         modal.Secret.from_name("huggingface-secret"),
         modal.Secret.from_name("wandb-secret"),
@@ -46,14 +46,14 @@ def train() -> None:
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype="float16",
+        bnb_4bit_compute_dtype="bfloat16",
         bnb_4bit_use_double_quant=True,
     )
 
     lora_config = LoraConfig(
         r=32,
-        lora_alpha=32,
-        lora_dropout=0.05,
+        lora_alpha=64,
+        lora_dropout=0.1,
         target_modules="all-linear",
         task_type="CAUSAL_LM",
     )
@@ -67,29 +67,27 @@ def train() -> None:
     )
 
     sft_config = SFTConfig(
-        output_dir="/vol/checkpoints/nothing-gpt",
-        max_length=512,
+        output_dir="/vol/checkpoints/multiturn-r32-2k",
+        max_length=2048,
         num_train_epochs=1,
-        learning_rate=2e-4,
+        learning_rate=5e-5,
+        weight_decay=0.01,
         lr_scheduler_type="cosine",
         per_device_train_batch_size=4,
+        per_device_eval_batch_size=2,
         gradient_accumulation_steps=4,
-        fp16=True,
-        gradient_checkpointing=True,
-        gradient_checkpointing_kwargs={"use_reentrant": False},
+        bf16=True,
         logging_steps=10,
         eval_strategy="steps",
-        eval_steps=500,
+        eval_steps=100,
         save_strategy="steps",
-        save_steps=500,
-        load_best_model_at_end=True,
-        metric_for_best_model="eval_loss",
+        save_steps=100,
         warmup_steps=200,
         report_to="wandb",
-        run_name="nothing-gpt-r32",
+        run_name="multiturn-r32-2k",
         model_init_kwargs={
             "quantization_config": bnb_config,
-            "torch_dtype": torch.float16,
+            "torch_dtype": torch.bfloat16,
         },
     )
 
@@ -101,10 +99,6 @@ def train() -> None:
         peft_config=lora_config,
         callbacks=[VolumeCommitCallback()],
     )
-
-    for param in trainer.model.parameters():
-        if param.requires_grad and param.dtype != torch.float32:
-            param.data = param.data.to(torch.float32)
 
     checkpoint_dir = sft_config.output_dir
     checkpoints = sorted(
