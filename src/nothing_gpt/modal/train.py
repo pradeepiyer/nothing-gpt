@@ -67,7 +67,7 @@ def train() -> None:
     )
 
     sft_config = SFTConfig(
-        output_dir="/vol/checkpoints/nothing-gpt-multiturn",
+        output_dir="/vol/checkpoints/multiturn-r64",
         max_length=1024,
         num_train_epochs=1,
         learning_rate=1e-4,
@@ -84,7 +84,7 @@ def train() -> None:
         metric_for_best_model="eval_loss",
         warmup_steps=200,
         report_to="wandb",
-        run_name="nothing-gpt-multiturn",
+        run_name="multiturn-r64",
         model_init_kwargs={
             "quantization_config": bnb_config,
             "torch_dtype": torch.bfloat16,
