@@ -80,8 +80,6 @@ def train() -> None:
         eval_steps=100,
         save_strategy="steps",
         save_steps=100,
-        load_best_model_at_end=True,
-        metric_for_best_model="eval_loss",
         warmup_steps=200,
         report_to="wandb",
         run_name="multiturn-r64",
