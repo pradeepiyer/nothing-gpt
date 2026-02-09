@@ -28,6 +28,23 @@ uv run modal deploy -m src.nothing_gpt.modal.ui      # deploy UI
 ```
 
 
+## Evaluation
+
+LLM-as-judge eval suite that scores generated responses on character consistency, humor, and coherence, and tests whether the model has learned distinct character voices.
+
+```bash
+# Quick smoke test (generation only, no judging)
+uv run python -m nothing_gpt.eval --skip-judge --max-prompts 10 --cross-character-count 5
+
+# Full eval run
+OPENAI_API_KEY=... uv run python -m nothing_gpt.eval
+
+# Re-run judging on saved responses
+OPENAI_API_KEY=... uv run python -m nothing_gpt.eval --skip-generation
+```
+
+Results are saved to `data/eval/`.
+
 ## Development
 
 ```bash
