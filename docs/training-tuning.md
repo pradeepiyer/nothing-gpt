@@ -25,13 +25,13 @@ These parameters control the adapter architecture — the trainable part of the 
 
 | Parameter | Current Value | What It Does | Alternatives |
 |-----------|--------------|--------------|--------------|
-| `r` | `64` | Rank of the low-rank matrices. Higher = more capacity, more VRAM, slower training | `16` — eval_loss 2.585 (single-turn); `32` — eval_loss 1.732 (multi-turn); `64` — eval_loss 1.727 (multi-turn, marginal gain) |
-| `lora_alpha` | `128` | Scaling factor. Effective scaling is `alpha/r` (currently 2.0) | `64` (ratio 1.0) — more conservative scaling |
+| `r` | `32` | Rank of the low-rank matrices. Higher = more capacity, more VRAM, slower training | `16` — eval_loss 2.585 (single-turn); `64` — eval_loss 1.727 (multi-turn, marginal 0.005 gain over r=32 with ~4× more params) |
+| `lora_alpha` | `64` | Scaling factor. Effective scaling is `alpha/r` (currently 2.0) | `128` with r=64 (ratio 2.0) |
 | `lora_dropout` | `0.1` | Dropout on LoRA layers for regularization | `0.0` — faster, risk of overfitting; `0.05` — less regularization |
 | `target_modules` | `"all-linear"` | Which layers get LoRA adapters | Specific names like `["q_proj", "v_proj"]` — fewer trainable params but less expressive |
 | `task_type` | `"CAUSAL_LM"` | Tells PEFT the model architecture type | No alternatives for this use case |
 
-**Guidance**: r=64 achieved eval_loss 1.727 vs r=32's 1.732 — a marginal 0.005 improvement despite ~4× more trainable parameters. The extra capacity mainly accelerated overfitting (train-eval gap of 0.97 by epoch 0.95 vs 0.31 for r=32 at epoch 0.47). r=32 is the sweet spot for this dataset. The alpha/rank ratio of 2.0 amplifies adapter contributions; the learning rate is halved to `1e-4` to keep the effective update magnitude constant (`lr × alpha/r = 1e-4 × 2.0 = 2e-4`). Dropout is 0.1 to help with overfitting.
+**Guidance**: r=64 achieved eval_loss 1.727 vs r=32's 1.732 — a marginal 0.005 improvement despite ~4× more trainable parameters. The extra capacity mainly accelerated overfitting (train-eval gap of 0.97 by epoch 0.95 vs 0.31 for r=32 at epoch 0.47). r=32 is the sweet spot for this dataset. The alpha/rank ratio of 2.0 amplifies adapter contributions; the learning rate is set to `5e-5` to keep effective updates stable (`lr × alpha/r = 5e-5 × 2.0 = 1e-4`). Dropout is 0.1 to help with overfitting.
 
 ## Training Loop — `SFTConfig`
 
@@ -39,7 +39,7 @@ These parameters control the adapter architecture — the trainable part of the 
 
 | Parameter | Current Value | What It Does | Alternatives |
 |-----------|--------------|--------------|--------------|
-| `max_length` | `1024` | Maximum sequence length in tokens. Conversations are truncated beyond this | `512` — wastes less memory on short sequences; `2048` — feasible on L4 |
+| `max_length` | `2048` | Maximum sequence length in tokens. Conversations are truncated beyond this | `1024` — 35% of examples were truncated at this length (P90=1705, P95=2067); `512` — wastes less memory on short sequences |
 
 ### Batch Size and Learning Rate
 
@@ -47,7 +47,8 @@ These parameters control the adapter architecture — the trainable part of the 
 |-----------|--------------|--------------|--------------|
 | `per_device_train_batch_size` | `4` | Micro-batch size per GPU | `8` — OOM with r=64 on L4; `16` — OOM |
 | `gradient_accumulation_steps` | `4` | Accumulate gradients over N micro-batches before updating | `2` — effective batch 8, noisier; `1` — effective batch 4, very noisy |
-| `learning_rate` | `1e-4` | Peak learning rate. Halved from 2e-4 to compensate for alpha/r ratio of 2.0 | `2e-4` — with alpha/r=1.0; `3e-4` — more aggressive, risk of instability |
+| `learning_rate` | `5e-5` | Peak learning rate. With alpha/r=2.0, effective update magnitude is `5e-5 × 2.0 = 1e-4` | `1e-4` — previous value, more aggressive; `3e-4` — risk of instability |
+| `weight_decay` | `0.01` | L2 regularization to combat overfitting over full epoch | `0.0` — previous default, no regularization |
 | `lr_scheduler_type` | `"cosine"` | How the learning rate decays over training | `"cosine_with_restarts"` — can escape local minima; `"linear"` — simpler decay curve |
 | `warmup_steps` | `200` | Steps of linear LR warmup from 0 to peak | `100` — faster ramp; `500` — more conservative warmup |
 | `num_train_epochs` | `1` | Number of passes through the training data | `2` — risk of overfitting (r=32 multi-turn peaked at epoch 0.24); `3` — severe overfitting |
@@ -67,9 +68,7 @@ These parameters control the adapter architecture — the trainable part of the 
 | `eval_strategy` | `"steps"` | Evaluate at fixed step intervals | `"epoch"` — evaluate once per epoch (too infrequent for monitoring) |
 | `eval_steps` | `100` | Run evaluation every N steps | `200` — less disk I/O; `500` — coarse granularity |
 | `save_strategy` | `"steps"` | Save checkpoints at fixed step intervals | `"epoch"` — fewer checkpoints |
-| `save_steps` | `100` | Save a checkpoint every N steps | Should match `eval_steps` when using `load_best_model_at_end` |
-| `load_best_model_at_end` | `True` | After training, load the checkpoint with the best eval metric | `False` — use the final checkpoint regardless |
-| `metric_for_best_model` | `"eval_loss"` | Which metric determines "best" | Any logged metric name |
+| `save_steps` | `100` | Save a checkpoint every N steps | `200` — fewer checkpoints, less disk I/O |
 
 ### Reporting
 
@@ -77,7 +76,7 @@ These parameters control the adapter architecture — the trainable part of the 
 |-----------|--------------|--------------|--------------|
 | `logging_steps` | `10` | Log training metrics every N steps | `1` — very verbose; `50` — less noise |
 | `report_to` | `"wandb"` | Send metrics to Weights & Biases | `"tensorboard"`, `"none"` |
-| `run_name` | `"multiturn-r64"` | Name for the W&B run | Any descriptive string |
+| `run_name` | `"multiturn-r32-2k"` | Name for the W&B run | Any descriptive string |
 
 ### Model Initialization
 
@@ -128,7 +127,7 @@ With the current configuration and dataset (13,482 training examples):
 | Eval/save frequency | Every 100 steps (~12% of an epoch) |
 | Warmup | 200 steps (~24% of epoch 1) |
 
-**Best result so far**: eval_loss **1.727** at checkpoint-200 (epoch 0.24), using r=64, alpha=128, multi-turn format, bf16, cosine schedule on L4. Only marginally better than r=32's 1.732 — the multi-turn data format was the primary driver, not rank (single-turn r=32 achieved only 2.542).
+**Best result so far**: eval_loss **1.727** at checkpoint-200 (epoch 0.24), using r=64, alpha=128, max_length=1024, multi-turn format, bf16, cosine schedule on L4. Only marginally better than r=32's 1.732 — the multi-turn data format was the primary driver, not rank (single-turn r=32 achieved only 2.542).
 
 ### All Runs
 
@@ -156,15 +155,15 @@ Impact: High | Cost: None
 
 The best multi-turn checkpoint was at epoch 0.24 — overfitting started by epoch 0.47 (eval loss increased while train loss dropped). Even with single-turn format, the best checkpoint was at epoch 0.94. `num_train_epochs=1` is already set; going lower would require `max_steps` instead.
 
-**2. Increase LoRA Rank (r=64 → 128)**
+**2. Increase LoRA Rank (r=32 → 64)**
 Impact: Low | Cost: More VRAM
 
-Rank increases show diminishing returns: r=16→r=32 improved eval_loss by 0.043 (single-turn), and r=32→r=64 improved by only 0.005 (multi-turn). r=64 also required halving batch size to avoid OOM and overfit significantly faster. r=128 is unlikely to help and would further constrain batch size.
+Rank increases show diminishing returns: r=16→r=32 improved eval_loss by 0.043 (single-turn), and r=32→r=64 improved by only 0.005 (multi-turn). r=64 also required halving batch size to avoid OOM and overfit significantly faster. r=64 is unlikely to help and would further constrain batch size.
 
 **3. Adjust Alpha/Rank Ratio**
 Impact: Medium | Cost: None
 
-The effective LoRA scaling is `alpha/r`. Currently 2.0 (128/64). Reducing to 1.0 would make the adapter more conservative; increasing further risks instability.
+The effective LoRA scaling is `alpha/r`. Currently 2.0 (64/32). Reducing to 1.0 would make the adapter more conservative; increasing further risks instability.
 
 **4. Cosine with Warm Restarts**
 Impact: Medium | Cost: None
@@ -179,13 +178,13 @@ If loss plateaus early, try `3e-4`. More aggressive learning in the critical fir
 **6. Weight Decay**
 Impact: Low | Cost: None
 
-Currently defaults to 0. Adding `weight_decay=0.01` can improve generalization slightly but unlikely to break a plateau.
+Set to 0.01 for L2 regularization. Helps with generalization but unlikely to break a plateau on its own.
 
 ### Hardware — GPU Options
 
 Training and serving have different bottlenecks: training is compute-bound (TFLOPS), serving is memory-bandwidth-bound (GB/s).
 
-| | T4 | L4 (training) | A10 |
+| | T4 | L4 | A10 |
 |---|---|---|---|
 | VRAM | 16 GB | 24 GB | 24 GB |
 | Memory bandwidth | 320 GB/s | 300 GB/s | 600 GB/s |
@@ -195,7 +194,7 @@ Training and serving have different bottlenecks: training is compute-bound (TFLO
 
 **Training uses L4.** The L4 has ~2× compute throughput vs T4 at 1.35× the hourly rate, making the total cost per run lower. The 24 GB VRAM enables bf16 training, larger batch sizes, and no gradient checkpointing. The A10 is not worth it for training — similar compute throughput at 1.38× the price.
 
-**Serving uses T4.** For a demo app with light traffic, the T4 is cheapest. If response latency matters, the A10's 2× memory bandwidth would improve token generation speed. The A10 would also allow dropping `--enforce-eager` and bumping `--max-model-len` to 2048.
+**Serving uses L4.** The T4 OOM'd with max-model-len=2048 + CUDA graphs + LoRA. The L4's 24 GB VRAM handles the longer context. If response latency matters further, the A10's 2× memory bandwidth would improve token generation speed.
 
 ### What NOT to Do
 
