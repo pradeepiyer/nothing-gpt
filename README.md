@@ -41,9 +41,12 @@ OPENAI_API_KEY=... uv run python -m nothing_gpt.eval
 
 # Re-run judging on saved responses
 OPENAI_API_KEY=... uv run python -m nothing_gpt.eval --skip-generation
+
+# Log metrics to Weights & Biases
+OPENAI_API_KEY=... WANDB_API_KEY=... uv run python -m nothing_gpt.eval --wandb
 ```
 
-Results are saved to `data/eval/`.
+Results are saved to `data/eval/`. Pass `--wandb-project` and `--wandb-run-name` to customize the wandb destination.
 
 ## Development
 
