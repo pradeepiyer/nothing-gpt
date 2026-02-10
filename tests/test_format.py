@@ -1,8 +1,8 @@
+from nothing_gpt.characters import SCRIPT_PROMPT
 from nothing_gpt.data.format import (
-    MAX_MESSAGES,
-    MIN_ASSISTANT_TURNS,
-    STRIDE,
-    _turns_to_messages,
+    CONTEXT_TURNS,
+    MIN_COMPLETION_TURNS,
+    WINDOW_SIZE,
     episode_to_examples,
     format_context,
     merge_consecutive_turns,
@@ -56,221 +56,122 @@ class TestMergeConsecutiveTurns:
         assert merged[0].dialogue == "Hey. Listen. I got an idea."
 
 
-class TestTurnsToMessages:
-    def test_alternates_user_assistant(self):
-        turns = [
-            DialogueTurn(character="GEORGE", dialogue="What happened?"),
-            DialogueTurn(character="JERRY", dialogue="Nothing."),
-            DialogueTurn(character="GEORGE", dialogue="Nothing?"),
-            DialogueTurn(character="JERRY", dialogue="Absolutely nothing."),
-        ]
-        messages = _turns_to_messages(turns, "JERRY")
-        assert messages == [
-            {"role": "user", "content": "[GEORGE] What happened?"},
-            {"role": "assistant", "content": "Nothing."},
-            {"role": "user", "content": "[GEORGE] Nothing?"},
-            {"role": "assistant", "content": "Absolutely nothing."},
-        ]
+def _make_episode(turns: list[tuple[str, str]], episode_id: str = "S01E01") -> Episode:
+    return Episode(
+        episode_id=episode_id,
+        season=1,
+        episode_no=1,
+        turns=[DialogueTurn(character=c, dialogue=d) for c, d in turns],
+    )
 
-    def test_merges_consecutive_non_target_turns(self):
-        turns = [
-            DialogueTurn(character="GEORGE", dialogue="Hey."),
-            DialogueTurn(character="ELAINE", dialogue="Hi."),
-            DialogueTurn(character="JERRY", dialogue="Hello."),
-        ]
-        messages = _turns_to_messages(turns, "JERRY")
-        assert messages == [
-            {"role": "user", "content": "[GEORGE] Hey.\n[ELAINE] Hi."},
-            {"role": "assistant", "content": "Hello."},
-        ]
 
-    def test_drops_trailing_user_lines(self):
-        turns = [
-            DialogueTurn(character="GEORGE", dialogue="Hey."),
-            DialogueTurn(character="JERRY", dialogue="Hi."),
-            DialogueTurn(character="GEORGE", dialogue="Bye."),
-        ]
-        messages = _turns_to_messages(turns, "JERRY")
-        assert len(messages) == 2
-        assert messages[-1]["role"] == "assistant"
-
-    def test_target_starts_episode(self):
-        turns = [
-            DialogueTurn(character="JERRY", dialogue="So."),
-            DialogueTurn(character="GEORGE", dialogue="What?"),
-            DialogueTurn(character="JERRY", dialogue="Nothing."),
-        ]
-        messages = _turns_to_messages(turns, "JERRY")
-        # First assistant message has no preceding user, so starts with assistant
-        assert messages[0] == {"role": "assistant", "content": "So."}
-        assert messages[1] == {"role": "user", "content": "[GEORGE] What?"}
-        assert messages[2] == {"role": "assistant", "content": "Nothing."}
-
-    def test_includes_non_main_characters_in_user(self):
-        turns = [
-            DialogueTurn(character="NEWMAN", dialogue="Hello Jerry."),
-            DialogueTurn(character="JERRY", dialogue="Newman."),
-        ]
-        messages = _turns_to_messages(turns, "JERRY")
-        assert messages[0]["content"] == "[NEWMAN] Hello Jerry."
-        assert messages[1]["content"] == "Newman."
+def _alternating_turns(n: int) -> list[tuple[str, str]]:
+    """Generate n alternating JERRY/GEORGE turns."""
+    chars = ["JERRY", "GEORGE"]
+    return [(chars[i % 2], f"Line {i}") for i in range(n)]
 
 
 class TestEpisodeToExamples:
-    def _make_episode(self, turns: list[tuple[str, str]]) -> Episode:
-        return Episode(
-            episode_id="S01E01",
-            season=1,
-            episode_no=1,
-            turns=[DialogueTurn(character=c, dialogue=d) for c, d in turns],
-        )
-
-    def test_messages_structure(self):
-        episode = self._make_episode([
-            ("GEORGE", "I'm thinking about quitting."),
-            ("JERRY", "You should."),
-            ("GEORGE", "Really?"),
-            ("JERRY", "Absolutely."),
-        ])
+    def test_each_example_has_three_messages(self):
+        episode = _make_episode(_alternating_turns(20))
         examples = episode_to_examples(episode)
-
-        # Find Jerry's example
-        jerry_examples = [
-            e for e in examples
-            if e["messages"][0]["content"].startswith("You are Jerry")
-        ]
-        assert len(jerry_examples) >= 1
-        ex = jerry_examples[0]
-
-        assert "messages" in ex
-        assert "prompt" not in ex
-        assert "completion" not in ex
-        assert ex["messages"][0]["role"] == "system"
-        assert ex["messages"][1]["role"] == "user"
-        # Must alternate user/assistant after system
-        roles = [m["role"] for m in ex["messages"][1:]]
-        for i in range(len(roles) - 1):
-            assert roles[i] != roles[i + 1], "Consecutive same roles found"
-
-    def test_generates_examples_for_multiple_characters(self):
-        episode = self._make_episode([
-            ("JERRY", "Hey."),
-            ("GEORGE", "Hey."),
-            ("JERRY", "What's up?"),
-            ("GEORGE", "Nothing."),
-            ("JERRY", "Nothing?"),
-            ("GEORGE", "Absolutely nothing."),
-        ])
-        examples = episode_to_examples(episode)
-
-        characters_seen = set()
+        assert len(examples) >= 1
         for ex in examples:
-            system_content = ex["messages"][0]["content"]
-            if "Jerry" in system_content:
-                characters_seen.add("JERRY")
-            if "George" in system_content:
-                characters_seen.add("GEORGE")
-
-        assert "JERRY" in characters_seen
-        assert "GEORGE" in characters_seen
-
-    def test_skips_character_with_too_few_assistant_turns(self):
-        # Elaine only has 1 line — should not produce an example (MIN_ASSISTANT_TURNS=2)
-        episode = self._make_episode([
-            ("JERRY", "Hey."),
-            ("ELAINE", "Hi."),
-            ("JERRY", "What's new?"),
-        ])
-        examples = episode_to_examples(episode)
-        elaine_examples = [
-            e for e in examples
-            if "Elaine" in e["messages"][0]["content"]
-        ]
-        assert len(elaine_examples) == 0
-
-    def test_min_assistant_turns_enforced(self):
-        episode = self._make_episode([
-            ("GEORGE", "Hey."),
-            ("JERRY", "Hi."),
-            ("GEORGE", "Bye."),
-            ("JERRY", "See ya."),
-        ])
-        examples = episode_to_examples(episode)
-        for ex in examples:
-            assistant_count = sum(1 for m in ex["messages"] if m["role"] == "assistant")
-            assert assistant_count >= MIN_ASSISTANT_TURNS
-
-    def test_starts_with_user_ends_with_assistant(self):
-        episode = self._make_episode([
-            ("JERRY", "So."),
-            ("GEORGE", "What?"),
-            ("JERRY", "Nothing."),
-            ("GEORGE", "Nothing?"),
-            ("JERRY", "Yeah."),
-            ("GEORGE", "Huh."),
-        ])
-        examples = episode_to_examples(episode)
-        assert len(examples) > 0
-        for ex in examples:
-            # After system message, should start with user
+            assert len(ex["messages"]) == 3
+            assert ex["messages"][0]["role"] == "system"
             assert ex["messages"][1]["role"] == "user"
-            assert ex["messages"][-1]["role"] == "assistant"
+            assert ex["messages"][2]["role"] == "assistant"
 
-    def test_consecutive_turns_merged_before_conversion(self):
-        episode = self._make_episode([
-            ("GEORGE", "Hey."),
-            ("GEORGE", "Listen."),
-            ("JERRY", "What?"),
-            ("GEORGE", "Nothing."),
-            ("JERRY", "Oh."),
-        ])
+    def test_system_prompt_is_script_prompt(self):
+        episode = _make_episode(_alternating_turns(20))
         examples = episode_to_examples(episode)
-        jerry_examples = [
-            e for e in examples
-            if "Jerry" in e["messages"][0]["content"]
-        ]
-        assert len(jerry_examples) >= 1
-        # The merged "Hey. Listen." should appear in user content
-        user_msgs = [m for m in jerry_examples[0]["messages"] if m["role"] == "user"]
-        assert any("Hey. Listen." in m["content"] for m in user_msgs)
-
-    def test_windowing_limits_message_count(self):
-        # Create a long episode that would exceed MAX_MESSAGES
-        turns: list[tuple[str, str]] = []
-        for i in range(30):
-            if i % 2 == 0:
-                turns.append(("GEORGE", f"Line {i}"))
-            else:
-                turns.append(("JERRY", f"Line {i}"))
-        episode = self._make_episode(turns)
-        examples = episode_to_examples(episode)
-
         for ex in examples:
-            # messages includes system + user/assistant, so at most MAX_MESSAGES + 1
-            non_system = [m for m in ex["messages"] if m["role"] != "system"]
-            assert len(non_system) <= MAX_MESSAGES
+            assert ex["messages"][0]["content"] == SCRIPT_PROMPT
 
-    def test_windowing_produces_overlapping_examples(self):
-        # With enough turns, sliding window with STRIDE should produce multiple examples
-        turns: list[tuple[str, str]] = []
-        for i in range(30):
-            if i % 2 == 0:
-                turns.append(("GEORGE", f"Line {i}"))
-            else:
-                turns.append(("JERRY", f"Line {i}"))
-        episode = self._make_episode(turns)
+    def test_user_and_assistant_use_bracket_format(self):
+        episode = _make_episode(_alternating_turns(20))
         examples = episode_to_examples(episode)
+        for ex in examples:
+            user_content = ex["messages"][1]["content"]
+            assistant_content = ex["messages"][2]["content"]
+            for line in user_content.split("\n"):
+                assert line.startswith("["), f"User line missing bracket format: {line}"
+            for line in assistant_content.split("\n"):
+                assert line.startswith("["), f"Assistant line missing bracket format: {line}"
 
-        jerry_examples = [
-            e for e in examples
-            if "Jerry" in e["messages"][0]["content"]
-        ]
-        assert len(jerry_examples) > 1
+    def test_user_has_context_turns_lines(self):
+        episode = _make_episode(_alternating_turns(20))
+        examples = episode_to_examples(episode)
+        for ex in examples:
+            user_lines = ex["messages"][1]["content"].split("\n")
+            assert len(user_lines) == CONTEXT_TURNS
 
-    def test_no_examples_from_single_turn(self):
-        episode = self._make_episode([("JERRY", "Hello")])
+    def test_assistant_has_at_least_min_completion_turns(self):
+        episode = _make_episode(_alternating_turns(20))
+        examples = episode_to_examples(episode)
+        for ex in examples:
+            assistant_lines = ex["messages"][2]["content"].split("\n")
+            assert len(assistant_lines) >= MIN_COMPLETION_TURNS
+
+    def test_sliding_window_produces_overlapping_examples(self):
+        episode = _make_episode(_alternating_turns(50))
+        examples = episode_to_examples(episode)
+        assert len(examples) > 1
+
+    def test_short_episode_produces_no_examples(self):
+        episode = _make_episode(_alternating_turns(10))
         examples = episode_to_examples(episode)
         assert len(examples) == 0
+
+    def test_all_characters_appear_in_output(self):
+        turns = [
+            ("JERRY", "Hey."), ("GEORGE", "What?"), ("ELAINE", "Nothing."),
+            ("KRAMER", "Giddy up!"), ("JERRY", "So."), ("GEORGE", "Yeah."),
+            ("ELAINE", "Right."), ("KRAMER", "Oh!"), ("JERRY", "Ok."),
+            ("GEORGE", "Fine."), ("ELAINE", "Sure."), ("KRAMER", "Alright."),
+            ("JERRY", "Done."), ("GEORGE", "Done."), ("ELAINE", "Done."),
+            ("KRAMER", "Done."), ("JERRY", "A."), ("GEORGE", "B."),
+            ("ELAINE", "C."), ("KRAMER", "D."),
+        ]
+        episode = _make_episode(turns)
+        examples = episode_to_examples(episode)
+        assert len(examples) >= 1
+        all_text = " ".join(
+            ex["messages"][1]["content"] + ex["messages"][2]["content"]
+            for ex in examples
+        )
+        for char in ["JERRY", "GEORGE", "ELAINE", "KRAMER"]:
+            assert f"[{char}]" in all_text
+
+    def test_consecutive_turns_merged_before_windowing(self):
+        turns = [
+            ("JERRY", "Hey."), ("JERRY", "Listen."),
+            ("GEORGE", "What?"), ("JERRY", "Nothing."),
+            ("GEORGE", "Ok."), ("JERRY", "Yeah."),
+            ("GEORGE", "Fine."), ("JERRY", "Sure."),
+            ("GEORGE", "Right."), ("JERRY", "Yep."),
+            ("GEORGE", "Alright."), ("JERRY", "Done."),
+            ("GEORGE", "Done."), ("JERRY", "A."),
+            ("GEORGE", "B."), ("JERRY", "C."),
+        ]
+        episode = _make_episode(turns)
+        examples = episode_to_examples(episode)
+        assert len(examples) >= 1
+        # "Hey. Listen." should be merged into one turn
+        all_text = " ".join(
+            ex["messages"][1]["content"] + ex["messages"][2]["content"]
+            for ex in examples
+        )
+        assert "Hey. Listen." in all_text
+
+    def test_assistant_completion_capped_at_window_size(self):
+        episode = _make_episode(_alternating_turns(100))
+        examples = episode_to_examples(episode)
+        for ex in examples:
+            user_lines = ex["messages"][1]["content"].split("\n")
+            assistant_lines = ex["messages"][2]["content"].split("\n")
+            total = len(user_lines) + len(assistant_lines)
+            assert total <= WINDOW_SIZE
 
 
 class TestSplitEpisodes:

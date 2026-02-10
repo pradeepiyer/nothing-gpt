@@ -1,23 +1,24 @@
-"""Format parsed dialogue into multi-turn conversation training data for TRL SFTTrainer."""
+"""Format parsed dialogue into script-continuation training data for TRL SFTTrainer."""
 
 import json
 import random
 from pathlib import Path
 
-from nothing_gpt.characters import MAIN_CHARACTERS, get_system_prompt
+from nothing_gpt.characters import SCRIPT_PROMPT
 from nothing_gpt.data.parse import DialogueTurn, Episode
 
 PROCESSED_DIR = Path(__file__).parent.parent.parent.parent / "data" / "processed"
 TRAINING_DIR = Path(__file__).parent.parent.parent.parent / "data" / "training"
 
-MAX_MESSAGES = 20  # Max messages (user + assistant) per training example
-MIN_ASSISTANT_TURNS = 2  # Minimum assistant turns per example
+CONTEXT_TURNS = 5  # Turns given as user prompt (context)
+WINDOW_SIZE = 35  # Total turns per window (context + completion)
+MIN_COMPLETION_TURNS = 10  # Minimum turns in the assistant completion
 STRIDE = 5  # Sliding window stride
 VAL_RATIO = 0.1  # 10% of episodes for validation
 
 
 def format_context(turns: list[DialogueTurn]) -> str:
-    """Format preceding turns as [CharName] Dialogue lines."""
+    """Format turns as [CharName] Dialogue lines."""
     return "\n".join(f"[{t.character}] {t.dialogue}" for t in turns)
 
 
@@ -37,68 +38,31 @@ def merge_consecutive_turns(turns: list[DialogueTurn]) -> list[DialogueTurn]:
     return merged
 
 
-def _turns_to_messages(
-    turns: list[DialogueTurn], character: str
-) -> list[dict[str, str]]:
-    """Convert dialogue turns to user/assistant messages for a target character.
-
-    Consecutive non-target turns are merged into a single user message.
-    Target character turns become assistant messages.
-    """
-    messages: list[dict[str, str]] = []
-    pending_user_lines: list[str] = []
-
-    for turn in turns:
-        if turn.character == character:
-            if pending_user_lines:
-                messages.append({"role": "user", "content": "\n".join(pending_user_lines)})
-                pending_user_lines = []
-            messages.append({"role": "assistant", "content": turn.dialogue})
-        else:
-            pending_user_lines.append(f"[{turn.character}] {turn.dialogue}")
-
-    # Trailing user lines are dropped (no assistant response follows)
-    return messages
-
-
 def episode_to_examples(episode: Episode) -> list[dict]:
-    """Generate multi-turn conversation examples from an episode.
+    """Generate script-continuation examples from an episode.
 
-    For each main character, convert the episode into alternating user/assistant
-    messages, then extract sliding windows.
+    Each example has a system prompt, a user message with context lines,
+    and an assistant message with continuation lines.
     """
     turns = merge_consecutive_turns(episode.turns)
+
     examples: list[dict] = []
+    start = 0
+    while start + CONTEXT_TURNS + MIN_COMPLETION_TURNS <= len(turns):
+        window = turns[start : start + WINDOW_SIZE]
+        context = window[:CONTEXT_TURNS]
+        completion = window[CONTEXT_TURNS:]
 
-    for character in MAIN_CHARACTERS:
-        messages = _turns_to_messages(turns, character)
+        if len(completion) >= MIN_COMPLETION_TURNS:
+            examples.append({
+                "messages": [
+                    {"role": "system", "content": SCRIPT_PROMPT},
+                    {"role": "user", "content": format_context(context)},
+                    {"role": "assistant", "content": format_context(completion)},
+                ]
+            })
 
-        if len(messages) < 2:
-            continue
-
-        system_prompt = get_system_prompt(character)
-
-        # Sliding window over messages
-        start = 0
-        while start < len(messages):
-            window = messages[start : start + MAX_MESSAGES]
-
-            # Trim to start with user, end with assistant
-            while window and window[0]["role"] != "user":
-                window = window[1:]
-            while window and window[-1]["role"] != "assistant":
-                window = window[:-1]
-
-            assistant_count = sum(1 for m in window if m["role"] == "assistant")
-            if len(window) >= 2 and assistant_count >= MIN_ASSISTANT_TURNS:
-                examples.append({
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        *window,
-                    ]
-                })
-
-            start += STRIDE
+        start += STRIDE
 
     return examples
 
