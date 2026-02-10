@@ -1,19 +1,24 @@
-"""Gradio chat UI served on Modal."""
+"""Gradio scene generator UI served on Modal."""
+
+import re
 
 import modal
+
+from nothing_gpt.characters import SCRIPT_PROMPT
 
 from .config import ui_image
 
 app = modal.App("nothing-gpt")
 
-CHARACTERS = {
-    "Jerry Seinfeld": "You are Jerry Seinfeld from the TV show Seinfeld. You are a stand-up comedian living in New York City. You are observational, witty, and slightly neurotic. You tend to find humor in mundane everyday situations. You often ask rhetorical questions about social conventions. You are neat, particular about your apartment, and have a rotating cast of girlfriends you find reasons to break up with. Stay in character at all times.",
-    "George Costanza": "You are George Costanza from the TV show Seinfeld. You are Jerry's best friend, a short, stocky, bald man who is insecure, cheap, dishonest, and perpetually unemployed or underemployed. You are neurotic, paranoid, and prone to elaborate schemes that backfire. You lie frequently and badly. You live with or near your overbearing parents Frank and Estelle. Despite your flaws you occasionally show surprising insight. Stay in character at all times.",
-    "Elaine Benes": "You are Elaine Benes from the TV show Seinfeld. You are Jerry's ex-girlfriend who remained close friends with the group. You work in publishing. You are smart, assertive, opinionated, and often frustrated by the men around you. You have a distinctive laugh and are known for your dancing (which is terrible). You can be petty and competitive but are generally the most reasonable person in the group. Stay in character at all times.",
-    "Cosmo Kramer": "You are Cosmo Kramer from the TV show Seinfeld. You are Jerry's eccentric neighbor who bursts through his door without knocking. You are tall, have wild hair, and move in a distinctive physical way. You come up with bizarre business ideas and schemes. You are oddly confident, surprisingly resourceful, and have an inexplicable network of connections. You speak in a distinctive cadence with dramatic pauses and physical comedy. You don't have a regular job but always seem to have money. Stay in character at all times.",
-}
-
 SERVE_URL = "https://pradeepiyer--nothing-gpt-serve-serve.modal.run/v1"
+CONTEXT_LINES = 10  # Lines of scene to send as context for each API call
+NUM_ROUNDS = 12  # Number of API calls to generate a full scene
+
+
+def _parse_line(text: str) -> str | None:
+    """Extract a [CHARACTER] dialogue line from model output."""
+    match = re.match(r"\[([A-Z]+)\] .+", text.strip())
+    return text.strip() if match else None
 
 
 @app.function(image=ui_image, timeout=3600)
@@ -25,52 +30,47 @@ def web() -> None:
 
     client = OpenAI(base_url=SERVE_URL, api_key="not-needed", timeout=300)
 
-    def respond(
-        message: str,
-        history: list[dict[str, str]],
-        character: str,
-    ):  # type: ignore[no-untyped-def]
-        messages = [{"role": "system", "content": CHARACTERS[character]}]
-        for msg in history:
-            messages.append({"role": msg["role"], "content": msg["content"]})
-        messages.append({"role": "user", "content": message})
+    def generate_scene(premise: str):  # type: ignore[no-untyped-def]
+        if not premise.strip():
+            yield "Enter a premise to generate a scene."
+            return
 
-        try:
-            response = client.chat.completions.create(
-                model="seinfeld", messages=messages, stream=True,
-                max_tokens=256,
-            )
-            partial = ""
-            for chunk in response:
-                if chunk.choices[0].delta.content:
-                    partial += chunk.choices[0].delta.content
-                    yield partial
-        except Exception as e:
-            yield f"Error: {e}"
+        scene_lines: list[str] = []
 
-    demo = gr.ChatInterface(
-        fn=respond,
-        title="Nothing-GPT",
-        chatbot=gr.Chatbot(
-            placeholder="<strong>Nothing-GPT</strong><br>Pick a character and say something.",
-            height=550,
-            layout="bubble",
-            type="messages",
-        ),
-        textbox=gr.Textbox(
-            placeholder="Say something to Jerry...",
-            container=False,
-            scale=7,
-        ),
-        additional_inputs=[
-            gr.Radio(
-                choices=list(CHARACTERS.keys()),
-                value="Jerry Seinfeld",
-                label="Character",
-            ),
-        ],
-        additional_inputs_accordion=gr.Accordion(label="", open=True),
-        type="messages",
-        theme=gr.themes.Monochrome(),
-    )
+        for _ in range(NUM_ROUNDS):
+            context = "\n".join(scene_lines[-CONTEXT_LINES:]) if scene_lines else premise
+            messages = [
+                {"role": "system", "content": SCRIPT_PROMPT},
+                {"role": "user", "content": context},
+            ]
+
+            try:
+                response = client.chat.completions.create(
+                    model="seinfeld", messages=messages, max_tokens=256,
+                )
+                text = response.choices[0].message.content or ""
+                for line in text.strip().split("\n"):
+                    parsed = _parse_line(line)
+                    if parsed:
+                        scene_lines.append(parsed)
+            except Exception as e:
+                scene_lines.append(f"[Error: {e}]")
+                break
+
+            yield "\n".join(scene_lines)
+
+        yield "\n".join(scene_lines)
+
+    with gr.Blocks(theme=gr.themes.Monochrome(), title="Nothing-GPT") as demo:
+        gr.Markdown("# Nothing-GPT\nGenerate a Seinfeld scene from a premise.")
+        premise_input = gr.Textbox(
+            label="Premise",
+            placeholder="Jerry discovers his dry cleaner has been wearing his clothes...",
+            lines=2,
+        )
+        generate_btn = gr.Button("Generate Scene", variant="primary")
+        output = gr.Textbox(label="Scene", lines=20, interactive=False)
+
+        generate_btn.click(fn=generate_scene, inputs=premise_input, outputs=output)
+
     demo.launch(server_name="0.0.0.0", server_port=8000, prevent_thread_lock=True)

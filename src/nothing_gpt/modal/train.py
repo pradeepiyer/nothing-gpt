@@ -67,7 +67,7 @@ def train() -> None:
     )
 
     sft_config = SFTConfig(
-        output_dir="/vol/checkpoints/multiturn-r32-2k",
+        output_dir="/vol/checkpoints/script-r32-2k",
         max_length=2048,
         num_train_epochs=1,
         learning_rate=5e-5,
@@ -84,7 +84,7 @@ def train() -> None:
         save_steps=100,
         warmup_steps=200,
         report_to="wandb",
-        run_name="multiturn-r32-2k",
+        run_name="script-r32-2k",
         model_init_kwargs={
             "quantization_config": bnb_config,
             "torch_dtype": torch.bfloat16,
