@@ -69,9 +69,9 @@ def train() -> None:
     sft_config = SFTConfig(
         output_dir="/vol/checkpoints/script-r32-2k",
         max_length=2048,
-        num_train_epochs=1,
-        learning_rate=5e-5,
-        weight_decay=0.01,
+        num_train_epochs=2,
+        learning_rate=1e-4,
+        weight_decay=0.005,
         lr_scheduler_type="cosine",
         per_device_train_batch_size=4,
         per_device_eval_batch_size=2,
@@ -82,7 +82,7 @@ def train() -> None:
         eval_steps=100,
         save_strategy="steps",
         save_steps=100,
-        warmup_steps=200,
+        warmup_steps=50,
         report_to="wandb",
         run_name="script-r32-2k",
         model_init_kwargs={
