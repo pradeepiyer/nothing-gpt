@@ -17,6 +17,7 @@ dev-dependencies = [
     "ruff>=0.8",
     "pyright>=1.1",
     "modal>=0.72",
+    "tiktoken>=0.8",
 ]
 
 [tool.ruff]

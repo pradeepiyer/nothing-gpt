@@ -6,6 +6,7 @@ from nothing_gpt.data.format import (
     episode_to_examples,
     format_context,
     merge_consecutive_turns,
+    print_token_stats,
     split_episodes_by_id,
 )
 from nothing_gpt.data.parse import DialogueTurn, Episode
@@ -216,3 +217,36 @@ class TestSplitEpisodes:
         episodes = self._make_episodes(3)
         train, val = split_episodes_by_id(episodes, val_ratio=0.01)
         assert len(val) >= 1
+
+
+class TestPrintTokenStats:
+    def _make_examples(self, n: int) -> list[dict]:
+        return [
+            {
+                "messages": [
+                    {"role": "system", "content": SCRIPT_PROMPT},
+                    {"role": "user", "content": f"[JERRY] Line {i}"},
+                    {"role": "assistant", "content": f"[GEORGE] Response {i}"},
+                ]
+            }
+            for i in range(n)
+        ]
+
+    def test_prints_stats_for_multiple_examples(self, capsys):
+        print_token_stats(self._make_examples(10))
+        output = capsys.readouterr().out
+        assert "Token length statistics" in output
+        assert "P50:" in output
+        assert "P90:" in output
+        assert "Exceeding" in output
+
+    def test_handles_single_example(self, capsys):
+        print_token_stats(self._make_examples(1))
+        output = capsys.readouterr().out
+        assert "Token length statistics (1 examples" in output
+        assert "P50:" not in output  # quantiles need >= 2 data points
+
+    def test_handles_empty_input(self, capsys):
+        print_token_stats([])
+        output = capsys.readouterr().out
+        assert "No examples to analyze." in output

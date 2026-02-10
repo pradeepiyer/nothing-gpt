@@ -2,7 +2,10 @@
 
 import json
 import random
+import statistics
 from pathlib import Path
+
+import tiktoken
 
 from nothing_gpt.characters import SCRIPT_PROMPT
 from nothing_gpt.data.parse import DialogueTurn, Episode
@@ -15,6 +18,40 @@ WINDOW_SIZE = 35  # Total turns per window (context + completion)
 MIN_COMPLETION_TURNS = 10  # Minimum turns in the assistant completion
 STRIDE = 5  # Sliding window stride
 VAL_RATIO = 0.1  # 10% of episodes for validation
+MAX_LENGTH = 2048  # Training max_length — examples beyond this get truncated
+
+# Approximate overhead from chat template role markers (system/user/assistant tokens)
+CHAT_TEMPLATE_OVERHEAD = 20
+
+
+def print_token_stats(examples: list[dict]) -> None:
+    """Print token length statistics for training examples using tiktoken as a proxy.
+
+    Uses cl100k_base (GPT-4 tokenizer) which tracks within ~5-10% of Llama's tokenizer
+    for English text. Adds a fixed overhead estimate for chat template role markers.
+    """
+    if not examples:
+        print("No examples to analyze.")
+        return
+
+    enc = tiktoken.get_encoding("cl100k_base")
+    token_counts: list[int] = []
+    for ex in examples:
+        text = "".join(msg["content"] for msg in ex["messages"])
+        token_counts.append(len(enc.encode(text)) + CHAT_TEMPLATE_OVERHEAD)
+
+    token_counts.sort()
+    n = len(token_counts)
+    exceeding = sum(1 for c in token_counts if c > MAX_LENGTH)
+
+    print(f"\nToken length statistics ({n} examples, tiktoken cl100k proxy):")
+    print(f"  Min: {token_counts[0]}, Max: {token_counts[-1]}, "
+          f"Mean: {statistics.mean(token_counts):.0f}")
+    if n >= 2:
+        quantiles = statistics.quantiles(token_counts, n=100)
+        print(f"  P50: {quantiles[49]}, P90: {quantiles[89]}, "
+              f"P95: {quantiles[94]}, P99: {quantiles[98]}")
+    print(f"  Exceeding {MAX_LENGTH} tokens: {exceeding} ({exceeding / n * 100:.1f}%)")
 
 
 def format_context(turns: list[DialogueTurn]) -> str:
@@ -113,11 +150,14 @@ def format_dataset(
     train_path = output_dir / "train.jsonl"
     val_path = output_dir / "val.jsonl"
 
+    all_examples: list[dict] = []
+
     train_count = 0
     with open(train_path, "w") as f:
         for ep in train_eps:
             for example in episode_to_examples(ep):
                 f.write(json.dumps(example) + "\n")
+                all_examples.append(example)
                 train_count += 1
 
     val_count = 0
@@ -125,11 +165,13 @@ def format_dataset(
         for ep in val_eps:
             for example in episode_to_examples(ep):
                 f.write(json.dumps(example) + "\n")
+                all_examples.append(example)
                 val_count += 1
 
     print(f"Training examples: {train_count}")
     print(f"Validation examples: {val_count}")
     print(f"Saved to {train_path} and {val_path}")
+    print_token_stats(all_examples)
     return train_path, val_path
 
 
