@@ -52,7 +52,7 @@ def train() -> None:
 
     lora_config = LoraConfig(
         r=32,
-        lora_alpha=64,
+        lora_alpha=32,
         lora_dropout=0.1,
         target_modules="all-linear",
         task_type="CAUSAL_LM",
@@ -67,16 +67,16 @@ def train() -> None:
     )
 
     sft_config = SFTConfig(
-        output_dir="/vol/checkpoints/script-r32-2k-bs8",
+        output_dir="/vol/checkpoints/script-r32-2k-lr3e5",
         max_length=2048,
         completion_only_loss=True,
         num_train_epochs=1,
-        learning_rate=1e-4,
+        learning_rate=3e-5,
         weight_decay=0.005,
         lr_scheduler_type="cosine",
-        per_device_train_batch_size=8,
-        per_device_eval_batch_size=4,
-        gradient_accumulation_steps=2,
+        per_device_train_batch_size=4,
+        per_device_eval_batch_size=2,
+        gradient_accumulation_steps=4,
         bf16=True,
         logging_steps=10,
         eval_strategy="steps",
@@ -85,7 +85,7 @@ def train() -> None:
         save_steps=50,
         warmup_steps=50,
         report_to="wandb",
-        run_name="script-r32-2k-bs8",
+        run_name="script-r32-2k-lr3e5",
         model_init_kwargs={
             "quantization_config": bnb_config,
             "torch_dtype": torch.bfloat16,
