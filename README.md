@@ -22,9 +22,9 @@ uv run modal secret create wandb-secret WANDB_API_KEY=<your-key>
 ```bash
 uv run python scripts/run_etl.py                    # process training data
 uv run modal volume put nothing-gpt-vol data/training/ /data/  # upload to Modal
-uv run modal run -m src.nothing_gpt.modal.train      # train
-uv run modal deploy -m src.nothing_gpt.modal.serve   # deploy API
-uv run modal deploy -m src.nothing_gpt.modal.ui      # deploy UI
+uv run modal run -m nothing_gpt.sft.train             # train
+uv run modal deploy -m nothing_gpt.serve.server       # deploy API
+uv run modal deploy -m nothing_gpt.ui.app             # deploy UI
 ```
 
 
@@ -32,6 +32,6 @@ uv run modal deploy -m src.nothing_gpt.modal.ui      # deploy UI
 
 ```bash
 uv run pytest                  # tests
-uv run ruff check src/ tests/  # lint
-uv run pyright src/            # type check
+uv run ruff check nothing_gpt/ tests/  # lint
+uv run pyright nothing_gpt/            # type check
 ```

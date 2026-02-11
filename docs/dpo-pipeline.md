@@ -18,7 +18,7 @@ Prompts from val.jsonl
 
 ## Step 1: Preference Data Generation
 
-### New file: `src/nothing_gpt/dpo/generate_pairs.py`
+### New file: `nothing_gpt/dpo/generate_pairs.py`
 
 Generate multiple completions per prompt using the deployed vLLM endpoint:
 
@@ -31,7 +31,7 @@ Uses the existing vLLM serve endpoint (`SERVE_URL` from `config.py`) and the Ope
 
 ## Step 2: GPT-5 Judging
 
-### New file: `src/nothing_gpt/dpo/judge.py`
+### New file: `nothing_gpt/dpo/judge.py`
 
 For each prompt's 3 completions, ask GPT-5 to rank them on a single criterion:
 - **Faithfulness to Seinfeld scripts and characters** — Does the dialogue sound like it belongs in an actual Seinfeld episode? Does each character speak in their distinctive voice (Jerry's observational style, George's neurotic complaints, Elaine's sarcasm, Kramer's physicality and wild ideas)?
@@ -46,7 +46,7 @@ From each set of 3 completions, extract the best (chosen) and worst (rejected) �
 
 ## Step 3: DPO Training
 
-### New file: `src/nothing_gpt/modal/dpo_train.py`
+### New file: `nothing_gpt/dpo/train.py`
 
 Separate Modal app/function for DPO training using TRL's `DPOTrainer`:
 
@@ -100,7 +100,7 @@ Upload `data/dpo/train.jsonl` and `data/dpo/val.jsonl` to the Modal volume befor
 
 ## Step 6: Serve DPO Adapter
 
-### Modified file: `src/nothing_gpt/modal/serve.py`
+### Modified file: `nothing_gpt/serve/server.py`
 
 Add the DPO adapter as a separate model name `"seinfeld-dpo"` alongside the existing `"seinfeld"` (SFT) model. This enables A/B comparison at inference time.
 
@@ -113,12 +113,12 @@ Add the DPO adapter as a separate model name `"seinfeld-dpo"` alongside the exis
 
 | File | Action | Purpose |
 |------|--------|---------|
-| `src/nothing_gpt/dpo/__init__.py` | Create | Package init |
-| `src/nothing_gpt/dpo/generate_pairs.py` | Create | Batch inference for multiple completions |
-| `src/nothing_gpt/dpo/judge.py` | Create | GPT-5 judging pipeline |
-| `src/nothing_gpt/modal/dpo_train.py` | Create | DPO training Modal function |
-| `src/nothing_gpt/modal/config.py` | Modify | Add DPO adapter path constant |
-| `src/nothing_gpt/modal/serve.py` | Modify | Add `seinfeld-dpo` LoRA module |
+| `nothing_gpt/dpo/__init__.py` | Create | Package init |
+| `nothing_gpt/dpo/generate_pairs.py` | Create | Batch inference for multiple completions |
+| `nothing_gpt/dpo/judge.py` | Create | GPT-5 judging pipeline |
+| `nothing_gpt/dpo/train.py` | Create | DPO training Modal function |
+| `nothing_gpt/modal/config.py` | Modify | Add DPO adapter path constant |
+| `nothing_gpt/serve/server.py` | Modify | Add `seinfeld-dpo` LoRA module |
 | `pyproject.toml` | Modify | Add `openai` dependency for local judging |
 
 ## Dependencies
@@ -139,7 +139,7 @@ Add the DPO adapter as a separate model name `"seinfeld-dpo"` alongside the exis
 1. Generate completions: `uv run python -m nothing_gpt.dpo.generate_pairs`
 2. Judge with GPT-5: `OPENAI_API_KEY=... uv run python -m nothing_gpt.dpo.judge`
 3. Upload to volume: `modal volume put nothing-gpt-vol data/dpo/train.jsonl data/dpo/val.jsonl /vol/data/dpo/`
-4. Train: `uv run modal run --detach src.nothing_gpt.modal.dpo_train::dpo_train`
+4. Train: `uv run modal run --detach nothing_gpt.dpo.train::dpo_train`
 5. Monitor on WandB — watch `rewards/margins` trending upward
-6. Deploy: `uv run modal deploy -m src.nothing_gpt.modal.serve`
+6. Deploy: `uv run modal deploy -m nothing_gpt.serve.server`
 7. Test on Gradio UI — compare `seinfeld` (SFT) vs `seinfeld-dpo` (DPO) output

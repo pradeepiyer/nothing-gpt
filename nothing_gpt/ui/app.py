@@ -4,8 +4,8 @@ import re
 
 import modal
 
-from ..characters import SCRIPT_PROMPT
-from .config import ui_image
+from nothing_gpt.characters import SCRIPT_PROMPT
+from nothing_gpt.modal.config import ui_image
 
 app = modal.App("nothing-gpt")
 

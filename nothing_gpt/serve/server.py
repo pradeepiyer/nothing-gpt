@@ -5,7 +5,7 @@ import subprocess
 
 import modal
 
-from .config import ADAPTER_PATH, BASE_MODEL, hf_cache, serve_image, vol
+from nothing_gpt.modal.config import ADAPTER_PATH, BASE_MODEL, hf_cache, serve_image, vol
 
 app = modal.App("nothing-gpt-serve")
 

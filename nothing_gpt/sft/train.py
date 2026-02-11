@@ -2,7 +2,7 @@
 
 import modal
 
-from .config import (
+from nothing_gpt.modal.config import (
     ADAPTER_PATH,
     BASE_MODEL,
     DATA_PATH,
@@ -33,7 +33,6 @@ def train() -> None:
     import os
 
     import torch  # type: ignore[import-not-found]
-
     from datasets import load_dataset  # type: ignore[import-not-found]
     from peft import LoraConfig  # type: ignore[import-not-found]
     from transformers import BitsAndBytesConfig, TrainerCallback  # type: ignore[import-not-found]
