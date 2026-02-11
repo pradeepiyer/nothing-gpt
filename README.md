@@ -5,9 +5,9 @@ Chat with Jerry, George, Elaine, and Kramer powered by a fine-tuned Llama 3.2 3B
 ## How it works
 
 1. **Data**: TV scripts from Kaggle, parsed into dialogue turns per episode
-2. **Training**: QLoRA fine-tuning via TRL SFTTrainer on Modal (T4 GPU). One model serves all characters — system prompts differentiate character voices.
+2. **Training**: QLoRA fine-tuning via TRL SFTTrainer on Modal (T4 GPU). Generates scene based on theme. 
 3. **Serving**: vLLM on Modal with LoRA adapter, OpenAI-compatible API
-4. **UI**: Gradio chat interface on Modal — pick a character and start talking
+4. **UI**: Gradio chat interface on Modal — give a theme to generate a scene
 
 ## Setup
 
