@@ -39,14 +39,14 @@ def web() -> None:
         for _ in range(NUM_ROUNDS):
             context = "\n".join(scene_lines[-CONTEXT_LINES:]) if scene_lines else premise
             messages = [
-                {"role": "system", "content": SCRIPT_PROMPT},
+                {"role": "system", "content": f"{SCRIPT_PROMPT}\n\nScene premise: {premise}"},
                 {"role": "user", "content": context},
             ]
 
             try:
                 response = client.chat.completions.create(
                     model="seinfeld", messages=messages, max_tokens=256,
-                    frequency_penalty=0.5,
+                    frequency_penalty=0.5, temperature=0.7,
                 )
                 text = response.choices[0].message.content or ""
                 for line in text.strip().split("\n"):
