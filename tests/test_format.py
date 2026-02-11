@@ -1,4 +1,4 @@
-from nothing_gpt.characters import SCRIPT_PROMPT
+from nothing_gpt.constants import SCRIPT_PROMPT
 from nothing_gpt.data.format import (
     CONTEXT_TURNS,
     MIN_COMPLETION_TURNS,

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import tiktoken
 
-from nothing_gpt.characters import SCRIPT_PROMPT
+from nothing_gpt.constants import SCRIPT_PROMPT
 from nothing_gpt.data.parse import DialogueTurn, Episode
 
 PROCESSED_DIR = Path(__file__).parent.parent.parent.parent / "data" / "processed"
