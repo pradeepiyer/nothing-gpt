@@ -1,7 +1,5 @@
-# Data files
+# Raw data (from Kaggle, not generated)
 data/raw/
-data/processed/
-data/training/
 data/eval/
 
 # Python
