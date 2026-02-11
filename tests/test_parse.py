@@ -157,7 +157,7 @@ class TestParseCSV:
 
     def test_long_character_names_filtered(self, tmp_path: Path):
         rows = [
-            self._row("A" * 41, "Some dialogue"),
+            self._row("A" * 26, "Some dialogue"),
             self._row("ELAINE", "Get out!"),
         ]
         csv_path = self._make_csv(rows, tmp_path)
@@ -169,6 +169,46 @@ class TestParseCSV:
         rows = [self._row("GEORGE (YELLING)", "I was in the pool!")]
         csv_path = self._make_csv(rows, tmp_path)
         episodes = parse_csv(csv_path)
+        assert episodes[0].turns[0].character == "GEORGE"
+
+    def test_names_with_slashes_filtered(self, tmp_path: Path):
+        rows = [
+            self._row("ELAINE/JERRY", "Happy birthday!"),
+            self._row("KRAMER", "Giddy up!"),
+        ]
+        csv_path = self._make_csv(rows, tmp_path)
+        episodes = parse_csv(csv_path)
+        assert len(episodes[0].turns) == 1
+        assert episodes[0].turns[0].character == "KRAMER"
+
+    def test_names_with_parens_filtered(self, tmp_path: Path):
+        rows = [
+            self._row("(KNOCK ON DOOR", "Some text"),
+            self._row("JERRY", "Hello"),
+        ]
+        csv_path = self._make_csv(rows, tmp_path)
+        episodes = parse_csv(csv_path)
+        assert len(episodes[0].turns) == 1
+        assert episodes[0].turns[0].character == "JERRY"
+
+    def test_html_artifact_names_filtered(self, tmp_path: Path):
+        rows = [
+            self._row("<IMG SRC=HTTP", "Some text"),
+            self._row("ELAINE", "Get out!"),
+        ]
+        csv_path = self._make_csv(rows, tmp_path)
+        episodes = parse_csv(csv_path)
+        assert len(episodes[0].turns) == 1
+        assert episodes[0].turns[0].character == "ELAINE"
+
+    def test_stage_direction_words_filtered(self, tmp_path: Path):
+        rows = [
+            self._row("pause", "Some text"),
+            self._row("GEORGE", "I was in the pool!"),
+        ]
+        csv_path = self._make_csv(rows, tmp_path)
+        episodes = parse_csv(csv_path)
+        assert len(episodes[0].turns) == 1
         assert episodes[0].turns[0].character == "GEORGE"
 
     def test_missing_columns_raises(self, tmp_path: Path):

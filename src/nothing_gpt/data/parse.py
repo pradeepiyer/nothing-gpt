@@ -35,6 +35,21 @@ CHARACTER_ALIASES: dict[str, str] = {
 # Stage direction pattern: text enclosed in parentheses (possibly spanning content)
 STAGE_DIRECTION_RE = re.compile(r"\([^)]*\)")
 
+# Allowlist for valid character names: uppercase letters, digits, spaces, periods,
+# apostrophes, hyphens, and # (for "MAN #1" style names)
+VALID_NAME_RE = re.compile(r"^[A-Z][A-Z0-9 .'\-#]*$")
+
+# Words that pass the regex but are stage directions or script metadata, not characters
+STAGE_DIRECTION_WORDS: frozenset[str] = frozenset({
+    "ANNOYED", "CHUCKLING", "DELIGHTEDLY", "EXASPERATED", "EXITS",
+    "FURIOUS", "GASPS", "HANDS", "LAUGHING", "MIND", "MUTTERING",
+    "PANTING", "PAUSE", "PERKILY", "SARCASTICALLY", "SHRUGS", "SIGHS",
+    "WHISPERED", "WHISPERING", "NO REACTION", "YEAH",
+    "DEDICATION", "HTTP", "PUBLISHED", "SCENE",
+    "OPENING SCENE", "PERFORMED BY", "SO FAR",
+    "SONG OVER THE END CREDITS", "SUNG BY",
+})
+
 
 @dataclass
 class DialogueTurn:
@@ -94,9 +109,9 @@ def parse_csv(csv_path: Path = RAW_DIR / "scripts.csv") -> list[Episode]:
             character = normalize_character(character)
 
             if (
-                character.startswith(("[", "%"))
-                or "&" in character
-                or len(character) > 40
+                not VALID_NAME_RE.match(character)
+                or len(character) > 25
+                or character in STAGE_DIRECTION_WORDS
             ):
                 continue
 
