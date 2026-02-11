@@ -69,6 +69,7 @@ def train() -> None:
     sft_config = SFTConfig(
         output_dir="/vol/checkpoints/script-r32-2k-bs8",
         max_length=2048,
+        completion_only_loss=True,
         num_train_epochs=1,
         learning_rate=1e-4,
         weight_decay=0.005,

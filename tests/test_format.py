@@ -73,28 +73,29 @@ def _alternating_turns(n: int) -> list[tuple[str, str]]:
 
 
 class TestEpisodeToExamples:
-    def test_each_example_has_three_messages(self):
+    def test_each_example_has_prompt_and_completion(self):
         episode = _make_episode(_alternating_turns(20))
         examples = episode_to_examples(episode)
         assert len(examples) >= 1
         for ex in examples:
-            assert len(ex["messages"]) == 3
-            assert ex["messages"][0]["role"] == "system"
-            assert ex["messages"][1]["role"] == "user"
-            assert ex["messages"][2]["role"] == "assistant"
+            assert len(ex["prompt"]) == 2
+            assert ex["prompt"][0]["role"] == "system"
+            assert ex["prompt"][1]["role"] == "user"
+            assert len(ex["completion"]) == 1
+            assert ex["completion"][0]["role"] == "assistant"
 
     def test_system_prompt_is_script_prompt(self):
         episode = _make_episode(_alternating_turns(20))
         examples = episode_to_examples(episode)
         for ex in examples:
-            assert ex["messages"][0]["content"] == SCRIPT_PROMPT
+            assert ex["prompt"][0]["content"] == SCRIPT_PROMPT
 
     def test_user_and_assistant_use_bracket_format(self):
         episode = _make_episode(_alternating_turns(20))
         examples = episode_to_examples(episode)
         for ex in examples:
-            user_content = ex["messages"][1]["content"]
-            assistant_content = ex["messages"][2]["content"]
+            user_content = ex["prompt"][1]["content"]
+            assistant_content = ex["completion"][0]["content"]
             for line in user_content.split("\n"):
                 assert line.startswith("["), f"User line missing bracket format: {line}"
             for line in assistant_content.split("\n"):
@@ -104,14 +105,14 @@ class TestEpisodeToExamples:
         episode = _make_episode(_alternating_turns(20))
         examples = episode_to_examples(episode)
         for ex in examples:
-            user_lines = ex["messages"][1]["content"].split("\n")
+            user_lines = ex["prompt"][1]["content"].split("\n")
             assert len(user_lines) == CONTEXT_TURNS
 
     def test_assistant_has_at_least_min_completion_turns(self):
         episode = _make_episode(_alternating_turns(20))
         examples = episode_to_examples(episode)
         for ex in examples:
-            assistant_lines = ex["messages"][2]["content"].split("\n")
+            assistant_lines = ex["completion"][0]["content"].split("\n")
             assert len(assistant_lines) >= MIN_COMPLETION_TURNS
 
     def test_sliding_window_produces_overlapping_examples(self):
@@ -138,7 +139,7 @@ class TestEpisodeToExamples:
         examples = episode_to_examples(episode)
         assert len(examples) >= 1
         all_text = " ".join(
-            ex["messages"][1]["content"] + ex["messages"][2]["content"]
+            ex["prompt"][1]["content"] + ex["completion"][0]["content"]
             for ex in examples
         )
         for char in ["JERRY", "GEORGE", "ELAINE", "KRAMER"]:
@@ -160,7 +161,7 @@ class TestEpisodeToExamples:
         assert len(examples) >= 1
         # "Hey. Listen." should be merged into one turn
         all_text = " ".join(
-            ex["messages"][1]["content"] + ex["messages"][2]["content"]
+            ex["prompt"][1]["content"] + ex["completion"][0]["content"]
             for ex in examples
         )
         assert "Hey. Listen." in all_text
@@ -169,8 +170,8 @@ class TestEpisodeToExamples:
         episode = _make_episode(_alternating_turns(100))
         examples = episode_to_examples(episode)
         for ex in examples:
-            user_lines = ex["messages"][1]["content"].split("\n")
-            assistant_lines = ex["messages"][2]["content"].split("\n")
+            user_lines = ex["prompt"][1]["content"].split("\n")
+            assistant_lines = ex["completion"][0]["content"].split("\n")
             total = len(user_lines) + len(assistant_lines)
             assert total <= WINDOW_SIZE
 
@@ -223,11 +224,13 @@ class TestPrintTokenStats:
     def _make_examples(self, n: int) -> list[dict]:
         return [
             {
-                "messages": [
+                "prompt": [
                     {"role": "system", "content": SCRIPT_PROMPT},
                     {"role": "user", "content": f"[JERRY] Line {i}"},
+                ],
+                "completion": [
                     {"role": "assistant", "content": f"[GEORGE] Response {i}"},
-                ]
+                ],
             }
             for i in range(n)
         ]

@@ -37,7 +37,7 @@ def print_token_stats(examples: list[dict]) -> None:
     enc = tiktoken.get_encoding("cl100k_base")
     token_counts: list[int] = []
     for ex in examples:
-        text = "".join(msg["content"] for msg in ex["messages"])
+        text = "".join(msg["content"] for msg in ex["prompt"] + ex["completion"])
         token_counts.append(len(enc.encode(text)) + CHAT_TEMPLATE_OVERHEAD)
 
     token_counts.sort()
@@ -92,11 +92,13 @@ def episode_to_examples(episode: Episode) -> list[dict]:
 
         if len(completion) >= MIN_COMPLETION_TURNS:
             examples.append({
-                "messages": [
+                "prompt": [
                     {"role": "system", "content": SCRIPT_PROMPT},
                     {"role": "user", "content": format_context(context)},
+                ],
+                "completion": [
                     {"role": "assistant", "content": format_context(completion)},
-                ]
+                ],
             })
 
         start += STRIDE
