@@ -53,6 +53,7 @@ class Episode:
 def normalize_character(name: str) -> str:
     """Normalize character name to canonical form."""
     name = name.strip().upper()
+    name = STAGE_DIRECTION_RE.sub("", name).strip()
     return CHARACTER_ALIASES.get(name, name)
 
 
@@ -91,6 +92,14 @@ def parse_csv(csv_path: Path = RAW_DIR / "scripts.csv") -> list[Episode]:
                 continue
 
             character = normalize_character(character)
+
+            if (
+                character.startswith(("[", "%"))
+                or "&" in character
+                or len(character) > 40
+            ):
+                continue
+
             dialogue = clean_dialogue(dialogue)
 
             if not dialogue:

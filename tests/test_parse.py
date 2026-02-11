@@ -38,6 +38,12 @@ class TestNormalizeCharacter:
     def test_unknown_character_passthrough(self):
         assert normalize_character("LLOYD BRAUN") == "LLOYD BRAUN"
 
+    def test_stage_directions_stripped_from_name(self):
+        assert normalize_character("GEORGE (COUNTING ON HIS FINGERS)") == "GEORGE"
+
+    def test_stage_directions_stripped_before_alias_lookup(self):
+        assert normalize_character("GEORGE COSTANZA (YELLING)") == "GEORGE"
+
 
 class TestCleanDialogue:
     def test_removes_stage_directions(self):
@@ -117,6 +123,52 @@ class TestParseCSV:
         csv_path = self._make_csv(rows, tmp_path)
         episodes = parse_csv(csv_path)
         assert len(episodes[0].turns) == 1
+        assert episodes[0].turns[0].character == "GEORGE"
+
+    def test_scene_markers_filtered(self, tmp_path: Path):
+        rows = [
+            self._row("[SETTING", "Jerry's apartment"),
+            self._row("JERRY", "Hello"),
+        ]
+        csv_path = self._make_csv(rows, tmp_path)
+        episodes = parse_csv(csv_path)
+        assert len(episodes[0].turns) == 1
+        assert episodes[0].turns[0].character == "JERRY"
+
+    def test_narration_markers_filtered(self, tmp_path: Path):
+        rows = [
+            self._row("%", "The gang arrives at the restaurant"),
+            self._row("GEORGE", "I was here first!"),
+        ]
+        csv_path = self._make_csv(rows, tmp_path)
+        episodes = parse_csv(csv_path)
+        assert len(episodes[0].turns) == 1
+        assert episodes[0].turns[0].character == "GEORGE"
+
+    def test_multi_character_lines_filtered(self, tmp_path: Path):
+        rows = [
+            self._row("JERRY & ELAINE", "Happy birthday!"),
+            self._row("KRAMER", "Giddy up!"),
+        ]
+        csv_path = self._make_csv(rows, tmp_path)
+        episodes = parse_csv(csv_path)
+        assert len(episodes[0].turns) == 1
+        assert episodes[0].turns[0].character == "KRAMER"
+
+    def test_long_character_names_filtered(self, tmp_path: Path):
+        rows = [
+            self._row("A" * 41, "Some dialogue"),
+            self._row("ELAINE", "Get out!"),
+        ]
+        csv_path = self._make_csv(rows, tmp_path)
+        episodes = parse_csv(csv_path)
+        assert len(episodes[0].turns) == 1
+        assert episodes[0].turns[0].character == "ELAINE"
+
+    def test_stage_directions_in_character_name_stripped(self, tmp_path: Path):
+        rows = [self._row("GEORGE (YELLING)", "I was in the pool!")]
+        csv_path = self._make_csv(rows, tmp_path)
+        episodes = parse_csv(csv_path)
         assert episodes[0].turns[0].character == "GEORGE"
 
     def test_missing_columns_raises(self, tmp_path: Path):
