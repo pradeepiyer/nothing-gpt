@@ -1,6 +1,6 @@
 # Nothing-GPT
 
-Chat with Jerry, George, Elaine, and Kramer powered by a fine-tuned Llama 3.2 3B Instruct model.
+Generate a theme inspired by Seinfeld TV show based on a theme powered by a fine-tuned Llama 3.2 3B Instruct model.
 
 ## How it works
 
