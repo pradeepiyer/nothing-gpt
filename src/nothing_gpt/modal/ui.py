@@ -46,6 +46,7 @@ def web() -> None:
             try:
                 response = client.chat.completions.create(
                     model="seinfeld", messages=messages, max_tokens=256,
+                    frequency_penalty=0.5,
                 )
                 text = response.choices[0].message.content or ""
                 for line in text.strip().split("\n"):
