@@ -8,4 +8,5 @@ WORKDIR /app
 RUN pip install --no-cache-dir .
 
 EXPOSE 8000
+ENTRYPOINT []
 CMD ["python", "-m", "nothing_gpt.serve.server"]
