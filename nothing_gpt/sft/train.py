@@ -1,47 +1,17 @@
-"""QLoRA fine-tuning of Llama 3.2 via Modal."""
+"""QLoRA fine-tuning of Llama 3.2 on Seinfeld scripts."""
 
-import modal
+import os
 
-from nothing_gpt.modal.config import (
-    ADAPTER_PATH,
-    BASE_MODEL,
-    DATA_PATH,
-    hf_cache,
-    train_image,
-    vol,
-)
+import torch
+from datasets import load_dataset
+from peft import LoraConfig
+from transformers import BitsAndBytesConfig
+from trl import SFTConfig, SFTTrainer
 
-app = modal.App("nothing-gpt-train")
-
-VOLUMES = {
-    "/vol": vol,
-    "/root/.cache/huggingface": hf_cache,
-}
+from nothing_gpt.constants import ADAPTER_PATH, BASE_MODEL, DATA_PATH
 
 
-@app.function(
-    image=train_image,
-    gpu="L4",
-    volumes=VOLUMES,
-    timeout=86400,
-    secrets=[
-        modal.Secret.from_name("huggingface-secret"),
-        modal.Secret.from_name("wandb-secret"),
-    ],
-)
-def train() -> None:
-    import os
-
-    import torch  # type: ignore[import-not-found]
-    from datasets import load_dataset  # type: ignore[import-not-found]
-    from peft import LoraConfig  # type: ignore[import-not-found]
-    from transformers import BitsAndBytesConfig, TrainerCallback  # type: ignore[import-not-found]
-    from trl import SFTConfig, SFTTrainer  # type: ignore[import-not-found]
-
-    class VolumeCommitCallback(TrainerCallback):  # type: ignore[misc]
-        def on_save(self, args, state, control, **kwargs) -> None:  # noqa: ANN001, ANN003
-            vol.commit()
-
+def train(callbacks: list | None = None) -> None:
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
@@ -97,7 +67,7 @@ def train() -> None:
         train_dataset=dataset["train"],
         eval_dataset=dataset["validation"],
         peft_config=lora_config,
-        callbacks=[VolumeCommitCallback()],
+        callbacks=callbacks or [],
     )
 
     checkpoint_dir = sft_config.output_dir
@@ -111,5 +81,8 @@ def train() -> None:
 
     # Save adapter
     trainer.save_model(ADAPTER_PATH)
-    vol.commit()
     print(f"Adapter saved to {ADAPTER_PATH}")
+
+
+if __name__ == "__main__":
+    train()

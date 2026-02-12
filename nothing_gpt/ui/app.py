@@ -1,15 +1,14 @@
-"""Gradio scene generator UI served on Modal."""
+"""Gradio scene generator UI for Nothing-GPT."""
 
+import os
 import re
 
-import modal
+import gradio as gr
+from openai import OpenAI
 
 from nothing_gpt.constants import SCRIPT_PROMPT
-from nothing_gpt.modal.config import ui_image
 
-app = modal.App("nothing-gpt")
-
-SERVE_URL = "https://pradeepiyer--nothing-gpt-serve-serve.modal.run/v1"
+SERVE_URL = os.environ.get("SERVE_URL", "http://nothing-gpt-serve:8000/v1")
 CONTEXT_LINES = 10  # Lines of scene to send as context for each API call
 NUM_ROUNDS = 12  # Number of API calls to generate a full scene
 
@@ -20,13 +19,7 @@ def _parse_line(text: str) -> str | None:
     return text.strip() if match else None
 
 
-@app.function(image=ui_image, timeout=3600)
-@modal.concurrent(max_inputs=32)
-@modal.web_server(port=8000, startup_timeout=120)
-def web() -> None:
-    import gradio as gr  # type: ignore[import-not-found]
-    from openai import OpenAI  # type: ignore[import-not-found]
-
+def web(prevent_thread_lock: bool = False) -> None:
     client = OpenAI(base_url=SERVE_URL, api_key="not-needed", timeout=300)
 
     def generate_scene(premise: str):  # type: ignore[no-untyped-def]
@@ -73,4 +66,8 @@ def web() -> None:
 
         generate_btn.click(fn=generate_scene, inputs=premise_input, outputs=output)
 
-    demo.launch(server_name="0.0.0.0", server_port=8000, prevent_thread_lock=True)
+    demo.launch(server_name="0.0.0.0", server_port=8000, prevent_thread_lock=prevent_thread_lock)
+
+
+if __name__ == "__main__":
+    web()

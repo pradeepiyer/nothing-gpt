@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nothing-gpt-serve
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nothing-gpt-serve
+  template:
+    metadata:
+      labels:
+        app: nothing-gpt-serve
+      annotations:
+        gke-gcsfuse/volumes: "true"
+    spec:
+      serviceAccountName: nothing-gpt-sa
+      nodeSelector:
+        cloud.google.com/gke-accelerator: nvidia-l4
+      containers:
+        - name: serve
+          image: us-central1-docker.pkg.dev/nothing-gpt/nothing-gpt/serve:latest
+          resources:
+            requests:
+              cpu: "4"
+              memory: 24Gi
+              nvidia.com/gpu: "1"
+            limits:
+              nvidia.com/gpu: "1"
+          ports:
+            - containerPort: 8000
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-secret
+                  key: HF_TOKEN
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 120
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 120
+            periodSeconds: 30
+          volumeMounts:
+            - name: gcs-data
+              mountPath: /vol
+              readOnly: true
+      volumes:
+        - name: gcs-data
+          csi:
+            driver: gcsfuse.csi.storage.gke.io
+            readOnly: true
+            volumeAttributes:
+              bucketName: nothing-gpt-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nothing-gpt-serve
+spec:
+  selector:
+    app: nothing-gpt-serve
+  ports:
+    - port: 8000
+      targetPort: 8000

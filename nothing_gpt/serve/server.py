@@ -1,18 +1,10 @@
-"""Serve fine-tuned Seinfeld model via vLLM on Modal."""
+"""Serve fine-tuned Seinfeld model via vLLM."""
 
 import json
 import subprocess
+import sys
 
-import modal
-
-from nothing_gpt.modal.config import ADAPTER_PATH, BASE_MODEL, hf_cache, serve_image, vol
-
-app = modal.App("nothing-gpt-serve")
-
-VOLUMES = {
-    "/vol": vol,
-    "/root/.cache/huggingface": hf_cache,
-}
+from nothing_gpt.constants import ADAPTER_PATH, BASE_MODEL
 
 LORA_CONFIG = json.dumps({
     "name": "seinfeld",
@@ -20,20 +12,9 @@ LORA_CONFIG = json.dumps({
 })
 
 
-@app.function(
-    image=serve_image,
-    gpu="L4",
-    volumes=VOLUMES,
-    timeout=600,
-    scaledown_window=900,
-    max_containers=1,
-    secrets=[modal.Secret.from_name("huggingface-secret")],
-)
-@modal.concurrent(max_inputs=32)
-@modal.web_server(port=8000, startup_timeout=600)
-def serve() -> None:
+def serve(background: bool = False) -> None:
     cmd = [
-        "python", "-m", "vllm.entrypoints.openai.api_server",
+        sys.executable, "-m", "vllm.entrypoints.openai.api_server",
         "--model", BASE_MODEL,
         "--host", "0.0.0.0",
         "--port", "8000",
@@ -46,4 +27,11 @@ def serve() -> None:
         "--gpu-memory-utilization", "0.95",
         "--enforce-eager",
     ]
-    subprocess.Popen(cmd)
+    if background:
+        subprocess.Popen(cmd)
+    else:
+        subprocess.run(cmd, check=True)
+
+
+if __name__ == "__main__":
+    serve()

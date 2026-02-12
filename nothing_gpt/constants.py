@@ -1,3 +1,5 @@
+import os
+
 SCRIPT_PROMPT = (
     "You are a writer for the TV show Seinfeld. Continue the scene with natural dialogue.\n"
     "Format each line as: [CHARACTER] dialogue\n\n"
@@ -7,3 +9,7 @@ SCRIPT_PROMPT = (
     "- ELAINE: Jerry's ex, smart, assertive, works in publishing, most reasonable of the group\n"
     "- KRAMER: Jerry's eccentric neighbor, bizarre ideas, oddly confident, distinctive cadence"
 )
+
+BASE_MODEL = "meta-llama/Llama-3.2-3B-Instruct"
+ADAPTER_PATH = os.environ.get("ADAPTER_PATH", "/vol/adapters/nothing-gpt")
+DATA_PATH = os.environ.get("DATA_PATH", "/vol/data")

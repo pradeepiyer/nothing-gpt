@@ -1,10 +1,6 @@
-"""Modal app configuration, volumes, images, and constants."""
+"""Modal volumes and images."""
 
 import modal
-
-BASE_MODEL = "meta-llama/Llama-3.2-3B-Instruct"
-ADAPTER_PATH = "/vol/adapters/nothing-gpt"
-DATA_PATH = "/vol/data"
 
 vol = modal.Volume.from_name("nothing-gpt-vol", create_if_missing=True)
 hf_cache = modal.Volume.from_name("huggingface-cache", create_if_missing=True)

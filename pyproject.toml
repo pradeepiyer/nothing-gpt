@@ -36,7 +36,6 @@ typeCheckingMode = "standard"
 exclude = [
     "nothing_gpt/modal",
     "nothing_gpt/sft",
-    "nothing_gpt/serve",
     "nothing_gpt/ui",
 ]
 
