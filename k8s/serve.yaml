@@ -17,6 +17,23 @@ spec:
       serviceAccountName: nothing-gpt-sa
       nodeSelector:
         cloud.google.com/gke-accelerator: nvidia-l4
+      initContainers:
+        - name: wait-for-mount
+          image: busybox:1.37
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for GCS FUSE mount..."
+              until [ -f /vol/adapters/nothing-gpt/adapter_config.json ]; do
+                echo "Mount not ready, retrying in 2s..."
+                sleep 2
+              done
+              echo "Mount ready, adapter files found"
+          volumeMounts:
+            - name: gcs-data
+              mountPath: /vol
+              readOnly: true
       containers:
         - name: serve
           image: us-central1-docker.pkg.dev/nothing-gpt/nothing-gpt/serve:latest
@@ -58,6 +75,7 @@ spec:
             readOnly: true
             volumeAttributes:
               bucketName: nothing-gpt-data
+              mountOptions: "implicit-dirs"
 ---
 apiVersion: v1
 kind: Service

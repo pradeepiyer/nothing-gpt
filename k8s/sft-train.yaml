@@ -18,6 +18,22 @@ spec:
           operator: Equal
           value: "true"
           effect: NoSchedule
+      initContainers:
+        - name: wait-for-mount
+          image: busybox:1.37
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for GCS FUSE mount..."
+              until [ -f /vol/data/train.jsonl ]; do
+                echo "Mount not ready, retrying in 2s..."
+                sleep 2
+              done
+              echo "Mount ready, training data found"
+          volumeMounts:
+            - name: gcs-data
+              mountPath: /vol
       containers:
         - name: train
           image: us-central1-docker.pkg.dev/nothing-gpt/nothing-gpt/train:latest
@@ -48,3 +64,4 @@ spec:
             driver: gcsfuse.csi.storage.gke.io
             volumeAttributes:
               bucketName: nothing-gpt-data
+              mountOptions: "implicit-dirs"

@@ -9,4 +9,4 @@ RUN pip install --no-cache-dir .
 
 EXPOSE 8000
 ENTRYPOINT []
-CMD ["python", "-m", "nothing_gpt.serve.server"]
+CMD ["python3", "-m", "nothing_gpt.serve.server"]
