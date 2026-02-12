@@ -1,5 +1,7 @@
 FROM python:3.13-slim
 
+ENV DEBIAN_FRONTEND=noninteractive
+
 RUN pip install --no-cache-dir \
     "gradio~=5.7.1" \
     "requests" \
