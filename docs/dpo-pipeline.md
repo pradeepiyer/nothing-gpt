@@ -10,51 +10,64 @@ To improve output quality beyond what SFT provides, we'll add a DPO (Direct Pref
 
 ```
 Prompts from val.jsonl
-    → Batch inference (current SFT adapter, 3 completions per prompt)
-    → GPT-5 judges pairs → (chosen, rejected)
-    → DPO training (new LoRA adapter starting from SFT adapter)
-    → Deploy DPO adapter
+    → generate_pairs.py: 3 completions per prompt via vLLM (local or GKE Job)
+    → judge.py: GPT-5 ranks completions → chosen/rejected pairs (local or GKE Job)
+    → train.py: DPO training with dual LoRA adapters (Modal or GKE Job)
+    → Serve DPO adapter alongside SFT adapter
 ```
 
-## Step 1: Preference Data Generation
+## Step 1: Generate Completions
 
-### New file: `nothing_gpt/dpo/generate_pairs.py`
+### `nothing_gpt/dpo/generate_pairs.py`
 
-Generate multiple completions per prompt using the deployed vLLM endpoint:
+Generate multiple completions per prompt using the vLLM endpoint:
 
-- Pull prompts from `data/training/val.jsonl` (1,021 examples)
-- For each prompt, generate 3 completions at temperature=0.9 (diverse sampling)
-- Produces 3 completions × 1,021 prompts = 3,063 completions
-- Output: `data/dpo/completions.jsonl` — each row has `{prompt, completions: [str, str, str]}`
+- Uses `SERVE_URL` env var (same pattern as `ui/app.py`)
+- Reads prompts from `DATA_PATH/val.jsonl` (1,021 examples)
+- For each prompt, generates 3 completions at temperature=0.9 (diverse sampling)
+- Writes `completions.jsonl` to `DPO_DATA_PATH` — each row has `{prompt, completions: [str, str, str]}`
 
-Uses the existing vLLM serve endpoint (`SERVE_URL` from `config.py`) and the OpenAI client pattern already in `ui.py`.
+**Local:**
+```bash
+SERVE_URL=https://pradeepiyer--nothing-gpt-serve-serve.modal.run/v1 \
+DPO_DATA_PATH=data/dpo \
+uv run python -m nothing_gpt.dpo.generate_pairs
+```
+
+**GKE:** `k8s/dpo-generate-pairs.yaml` — Job using `ui:latest` image, CMD override, `SERVE_URL=http://nothing-gpt-serve:8000/v1`, GCS FUSE mount, no GPU.
 
 ## Step 2: GPT-5 Judging
 
-### New file: `nothing_gpt/dpo/judge.py`
+### `nothing_gpt/dpo/judge.py`
 
-For each prompt's 3 completions, ask GPT-5 to rank them on a single criterion:
+For each prompt's 3 completions, GPT-5 ranks them on:
 - **Faithfulness to Seinfeld scripts and characters** — Does the dialogue sound like it belongs in an actual Seinfeld episode? Does each character speak in their distinctive voice (Jerry's observational style, George's neurotic complaints, Elaine's sarcasm, Kramer's physicality and wild ideas)?
 
-From each set of 3 completions, extract the best (chosen) and worst (rejected) → 1 preference pair per prompt.
+From each set of 3 completions, extracts the best (chosen) and worst (rejected) → 1 preference pair per prompt.
 
-- Input: `data/dpo/completions.jsonl`
-- Output: `data/dpo/preferences.jsonl` — each row has `{prompt, chosen, rejected}`
+- Reads from `DPO_DATA_PATH/completions.jsonl`
+- Writes `train.jsonl` and `val.jsonl` to `DPO_DATA_PATH` (90/10 split, shuffled with seed)
 - Uses OpenAI SDK with `gpt-5` model
-- Requires `OPENAI_API_KEY` environment variable
 - ~1,021 API calls to GPT-5
+
+**Local:**
+```bash
+OPENAI_API_KEY=... DPO_DATA_PATH=data/dpo \
+uv run python -m nothing_gpt.dpo.judge
+```
+
+**GKE:** `k8s/dpo-judge.yaml` — Job using `ui:latest` image, CMD override, `OPENAI_API_KEY` from k8s secret `openai-secret`, GCS FUSE mount, no GPU.
 
 ## Step 3: DPO Training
 
-### New file: `nothing_gpt/dpo/train.py`
+### `nothing_gpt/dpo/train.py`
 
-Separate Modal app/function for DPO training using TRL's `DPOTrainer`:
+Follows the `sft/train.py` pattern: standalone `train(callbacks=None)` function, uses constants for paths, has checkpoint resume logic.
 
 ```python
-# Load base model with QLoRA (same as SFT)
-# Load SFT adapter as both "train" and "reference"
-model = PeftModel.from_pretrained(base, sft_path, adapter_name="train")
-model.load_adapter(sft_path, adapter_name="reference")
+# Dual-adapter setup for DPO
+model = PeftModel.from_pretrained(base, ADAPTER_PATH, adapter_name="train")
+model.load_adapter(ADAPTER_PATH, adapter_name="reference")
 
 DPOConfig(
     model_adapter_name="train",
@@ -83,63 +96,138 @@ Key differences from SFT:
 - **Dual adapter** — reference adapter stays frozen, train adapter gets updated
 - **Preference data format** — `{prompt, chosen, rejected}` not `{prompt, completion}`
 - **beta=0.1** — controls how far the model can drift from the SFT reference
+- Reads from `DPO_DATA_PATH`, saves to `DPO_ADAPTER_PATH`
 
 Memory: Fits on L4 (24GB). Second adapter is ~150MB, not a full model copy.
 
-## Step 4: Train/Val Split on Preference Data
+### `nothing_gpt/modal/dpo_train.py`
 
-Split the preference pairs 90/10 for DPO training and evaluation:
-- ~919 train pairs, ~102 val pairs (from the 1,021 prompts)
-- Split by prompt to avoid data leakage
-- Output: `data/dpo/train.jsonl` and `data/dpo/val.jsonl`
-- Can be done in `judge.py` or as a separate step
+Mirrors `modal/train.py` exactly:
+- App name: `"nothing-gpt-dpo-train"`
+- Same image (`train_image`), GPU (L4), timeout (86400), secrets, volumes
+- `VolumeCommitCallback` + `vol.commit()` after training
 
-## Step 5: Upload Preferences to Modal Volume
+## Step 4: Serve DPO Adapter
 
-Upload `data/dpo/train.jsonl` and `data/dpo/val.jsonl` to the Modal volume before training. Can use `modal volume put` or add to the existing data upload flow.
+### Modified: `nothing_gpt/serve/server.py`
 
-## Step 6: Serve DPO Adapter
-
-### Modified file: `nothing_gpt/serve/server.py`
-
-Add the DPO adapter as a separate model name `"seinfeld-dpo"` alongside the existing `"seinfeld"` (SFT) model. This enables A/B comparison at inference time.
+Replace the single `LORA_CONFIG` with a function that builds a JSON list:
 
 ```python
---lora-modules '{"name": "seinfeld", "path": "/vol/adapters/nothing-gpt"}'
-               '{"name": "seinfeld-dpo", "path": "/vol/adapters/nothing-gpt-dpo"}'
+def _lora_modules() -> str:
+    modules = [{"name": "seinfeld", "path": ADAPTER_PATH}]
+    if os.path.isdir(DPO_ADAPTER_PATH):
+        modules.append({"name": "seinfeld-dpo", "path": DPO_ADAPTER_PATH})
+    return json.dumps(modules)
 ```
 
-## Files to Create/Modify
+`os.path.isdir` works on GCS FUSE with the `implicit-dirs` mount option already set in `serve.yaml`. DPO adapter is optional — serve works with just the SFT adapter.
+
+No changes needed to `k8s/serve.yaml` (init container only checks SFT adapter), `modal/serve.py`, or `docker/serve.Dockerfile`.
+
+## New Constants
+
+### Modified: `nothing_gpt/constants.py`
+
+```python
+DPO_ADAPTER_PATH = os.environ.get("DPO_ADAPTER_PATH", "/vol/adapters/nothing-gpt-dpo")
+DPO_DATA_PATH = os.environ.get("DPO_DATA_PATH", "/vol/data/dpo")
+```
+
+## K8s Manifests
+
+### `k8s/dpo-generate-pairs.yaml` — Job (no GPU)
+
+- Image: `us-central1-docker.pkg.dev/nothing-gpt/nothing-gpt/ui:latest`
+- `command: ["python", "-m", "nothing_gpt.dpo.generate_pairs"]`
+- Env: `SERVE_URL=http://nothing-gpt-serve:8000/v1`
+- GCS FUSE mount at `/vol` (read-write)
+- Resources: 500m CPU, 512MB RAM
+- No init container (serve readiness handled by the serve deployment's readiness probe)
+
+### `k8s/dpo-judge.yaml` — Job (no GPU)
+
+- Image: `us-central1-docker.pkg.dev/nothing-gpt/nothing-gpt/ui:latest`
+- `command: ["python", "-m", "nothing_gpt.dpo.judge"]`
+- Env: `OPENAI_API_KEY` from k8s secret `openai-secret`
+- GCS FUSE mount at `/vol` (read-write)
+- Resources: 500m CPU, 512MB RAM
+- Init container waits for `/vol/data/dpo/completions.jsonl`
+
+### `k8s/dpo-train.yaml` — Job (L4 GPU)
+
+Mirrors `k8s/sft-train.yaml` with two differences:
+- Init container waits for `/vol/data/dpo/train.jsonl`
+- `command: ["python3.13", "-m", "nothing_gpt.dpo.train"]`
+
+Reuses `train:latest` Docker image. `trl>=0.15` already includes `DPOTrainer`. The `nothing_gpt` package (including the `dpo/` module) gets installed via `pip install .` in the existing Dockerfile.
+
+## Files Summary
 
 | File | Action | Purpose |
 |------|--------|---------|
+| `nothing_gpt/constants.py` | Modify | Add `DPO_ADAPTER_PATH`, `DPO_DATA_PATH` |
 | `nothing_gpt/dpo/__init__.py` | Create | Package init |
-| `nothing_gpt/dpo/generate_pairs.py` | Create | Batch inference for multiple completions |
-| `nothing_gpt/dpo/judge.py` | Create | GPT-5 judging pipeline |
-| `nothing_gpt/dpo/train.py` | Create | DPO training Modal function |
-| `nothing_gpt/modal/config.py` | Modify | Add DPO adapter path constant |
-| `nothing_gpt/serve/server.py` | Modify | Add `seinfeld-dpo` LoRA module |
-| `pyproject.toml` | Modify | Add `openai` dependency for local judging |
+| `nothing_gpt/dpo/generate_pairs.py` | Create | Completion generation (local + GKE) |
+| `nothing_gpt/dpo/judge.py` | Create | GPT-5 preference ranking (local + GKE) |
+| `nothing_gpt/dpo/train.py` | Create | Core DPO training logic |
+| `nothing_gpt/modal/dpo_train.py` | Create | Modal wrapper for DPO training |
+| `k8s/dpo-generate-pairs.yaml` | Create | GKE Job (no GPU, uses `ui:latest`) |
+| `k8s/dpo-judge.yaml` | Create | GKE Job (no GPU, uses `ui:latest`) |
+| `k8s/dpo-train.yaml` | Create | GKE Job (L4 GPU, uses `train:latest`) |
+| `nothing_gpt/serve/server.py` | Modify | Conditional DPO LoRA module |
+| `pyproject.toml` | Modify | Add `nothing_gpt/dpo` to pyright exclude |
+
+No new Dockerfiles needed. generate_pairs and judge reuse `ui:latest`, DPO training reuses `train:latest`.
 
 ## Dependencies
 
-- `trl>=0.15` — already in Modal train image
-- `openai` — already in UI image; add to pyproject.toml for local judging
-- `OPENAI_API_KEY` — needed for GPT-5 judging (local, not Modal)
+- `trl>=0.15` — already in train image
+- `openai` — already in UI image and pyproject.toml
+- `OPENAI_API_KEY` — needed for GPT-5 judging
+
+## Risks
+
+1. **DPOTrainer data format**: TRL expects `prompt`, `chosen`, `rejected` columns. Need to verify whether TRL's conversational DPO expects message lists or raw strings — will check during implementation.
+2. **`os.path.isdir` on GCS FUSE**: Should work with `implicit-dirs` mount option already set in `serve.yaml`. Low risk.
 
 ## Cost Estimates
 
-- **Batch inference**: Free (our own vLLM endpoint)
-- **GPT-5 judging**: ~1,021 calls. Depends on GPT-5 pricing — estimate ~$5-15
+- **Completions**: Free (our own vLLM endpoint)
+- **GPT-5 judging**: ~1,021 calls, estimate ~$5-15
 - **DPO training**: ~1-2 hours on L4 ($0.80/hr) = ~$1-2
 - **Total**: ~$7-17
 
 ## Verification
 
-1. Generate completions: `uv run python -m nothing_gpt.dpo.generate_pairs`
-2. Judge with GPT-5: `OPENAI_API_KEY=... uv run python -m nothing_gpt.dpo.judge`
-3. Upload to volume: `modal volume put nothing-gpt-vol data/dpo/train.jsonl data/dpo/val.jsonl /vol/data/dpo/`
-4. Train: `uv run modal run --detach nothing_gpt.dpo.train::dpo_train`
-5. Monitor on WandB — watch `rewards/margins` trending upward
-6. Deploy: `uv run modal deploy -m nothing_gpt.serve.server`
-7. Test on Gradio UI — compare `seinfeld` (SFT) vs `seinfeld-dpo` (DPO) output
+### GKE flow (end-to-end)
+1. `kubectl apply -f k8s/dpo-generate-pairs.yaml` — generates completions to GCS
+2. `kubectl apply -f k8s/dpo-judge.yaml` — ranks with GPT-5, writes train/val to GCS
+3. `kubectl apply -f k8s/dpo-train.yaml` — DPO training on L4
+4. Monitor on WandB — watch `rewards/margins` trending upward
+5. Redeploy serve (rebuild `train:latest` to pick up `dpo/` module, then rollout)
+6. Test: call API with `model="seinfeld-dpo"`
+
+### Modal flow
+1. Generate completions locally:
+   ```bash
+   SERVE_URL=https://pradeepiyer--nothing-gpt-serve-serve.modal.run/v1 \
+   DPO_DATA_PATH=data/dpo \
+   uv run python -m nothing_gpt.dpo.generate_pairs
+   ```
+2. Judge locally:
+   ```bash
+   OPENAI_API_KEY=... DPO_DATA_PATH=data/dpo \
+   uv run python -m nothing_gpt.dpo.judge
+   ```
+3. Upload to volume:
+   ```bash
+   modal volume put nothing-gpt-vol data/dpo/train.jsonl /data/dpo/train.jsonl
+   modal volume put nothing-gpt-vol data/dpo/val.jsonl /data/dpo/val.jsonl
+   ```
+4. Train: `uv run modal run --detach nothing_gpt.modal.dpo_train::train`
+5. Deploy: `uv run modal deploy -m nothing_gpt.modal.serve`
+6. Test: call API with `model="seinfeld-dpo"`
+
+### Local flow
+Same as Modal steps 1-2, then upload to GCS with `gsutil cp`.
