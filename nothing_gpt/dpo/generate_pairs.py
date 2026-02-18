@@ -85,23 +85,26 @@ async def _run(data_dir: str | None = None, output_dir: str | None = None) -> No
     if already_done:
         print(f"Resuming from {already_done}/{total}", flush=True)
 
-    with open(output_path, "a") as f:
-        sem = asyncio.Semaphore(MAX_CONCURRENT_PROMPTS)
-        completed = 0
+    sem = asyncio.Semaphore(MAX_CONCURRENT_PROMPTS)
+    completed = 0
+    buffer: list[str] = []
 
-        async def process_prompt(prompt: list[dict]) -> None:
-            nonlocal completed
-            async with sem:
-                completions = await generate_for_prompt(client, prompt)
-            row = {"prompt": prompt, "completions": completions}
-            f.write(json.dumps(row) + "\n")
-            completed += 1
-            if completed % FLUSH_INTERVAL == 0:
-                f.flush()
-                print(f"[{already_done + completed}/{total}] prompts completed", flush=True)
+    async def process_prompt(prompt: list[dict]) -> None:
+        nonlocal completed
+        async with sem:
+            completions = await generate_for_prompt(client, prompt)
+        buffer.append(json.dumps({"prompt": prompt, "completions": completions}))
+        completed += 1
+        if completed % FLUSH_INTERVAL == 0:
+            with open(output_path, "a") as f:
+                f.write("\n".join(buffer) + "\n")
+            buffer.clear()
+            print(f"[{already_done + completed}/{total}] prompts completed", flush=True)
 
-        await asyncio.gather(*(process_prompt(p) for p in prompts[already_done:]))
-        f.flush()
+    await asyncio.gather(*(process_prompt(p) for p in prompts[already_done:]))
+    if buffer:
+        with open(output_path, "a") as f:
+            f.write("\n".join(buffer) + "\n")
 
     print(f"Wrote {total} rows to {output_path}", flush=True)
     await client.close()
