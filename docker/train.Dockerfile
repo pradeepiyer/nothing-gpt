@@ -25,5 +25,3 @@ COPY pyproject.toml /app/
 COPY nothing_gpt/ /app/nothing_gpt/
 WORKDIR /app
 RUN python3.13 -m pip install --no-cache-dir .
-
-CMD ["python3.13", "-m", "nothing_gpt.sft.train"]

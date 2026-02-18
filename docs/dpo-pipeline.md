@@ -1,117 +1,230 @@
-# DPO Preference Optimization Pipeline
+# DPO Preference Optimization — Configuration and Tuning Guide
 
-## Context
+## Overview
 
-SFT training plateaued at eval_loss 2.187 (completion-only) with no overfitting — the model has learned the training distribution well. Further SFT epochs would yield diminishing returns (eval loss flatlined for the last 40% of epoch 1 due to cosine LR decay, and the train-eval gap is only 0.09).
+DPO (Direct Preference Optimization) trains the model to prefer higher-quality completions over lower-quality ones, using preference pairs ranked by an LLM judge. Unlike SFT which maximizes likelihood of training examples, DPO shifts the model's probability distribution toward chosen completions and away from rejected ones, relative to a frozen reference model.
 
-To improve output quality beyond what SFT provides, we'll add a DPO (Direct Preference Optimization) stage. This trains the model to prefer higher-quality completions (better character voice, humor, coherence, premise relevance) using preference pairs judged by GPT-5.
+The pipeline has three stages: **generate completions** → **judge preferences** → **train DPO**. Generate and judge run locally; training runs on GKE with an L4 GPU.
 
-## Pipeline Overview
+## Pipeline
 
 ```
-Prompts from val.jsonl
-    → generate_pairs.py: 3 completions per prompt via vLLM (local or GKE Job)
-    → judge.py: GPT-5 ranks completions → chosen/rejected pairs (local or GKE Job)
-    → train.py: DPO training with dual LoRA adapters (Modal or GKE Job)
-    → Serve DPO adapter alongside SFT adapter
+SFT val.jsonl (1,021 prompts)
+    → generate_pairs.py: 3 completions per prompt via vLLM endpoint
+    → judge.py: LLM judge ranks completions → chosen/rejected pairs
+    → train.py: DPO training on preference pairs
+    → Serve DPO adapter alongside SFT adapter (model="seinfeld-dpo")
 ```
 
-## Step 1: Generate Completions
+## Stage 1: Completion Generation
 
 ### `nothing_gpt/dpo/generate_pairs.py`
 
-Generate multiple completions per prompt using the vLLM endpoint:
+Generates diverse completions from the SFT model for each validation prompt. These completions are the raw material the judge will rank.
 
-- Uses `SERVE_URL` env var (same pattern as `ui/app.py`)
-- Reads prompts from `DATA_PATH/val.jsonl` (1,021 examples)
-- For each prompt, generates 3 completions at temperature=0.9 (diverse sampling)
-- Writes `completions.jsonl` to `DPO_DATA_PATH` — each row has `{prompt, completions: [str, str, str]}`
+#### Parameters
 
-**Local:**
+| Parameter | Value | Impact | Tuning |
+|-----------|-------|--------|--------|
+| `TEMPERATURE` | `0.9` | Controls diversity between completions. Higher = more varied. | Below 0.7, completions become too similar for the judge to distinguish. Above 1.0, quality degrades (incoherent text). 0.8–1.0 is the useful range for DPO. |
+| `NUM_COMPLETIONS` | `3` | Completions per prompt. Judge picks best and worst from this set. | 3 is the minimum for meaningful ranking. 5 gives better coverage but 2.5× more API calls and judging cost. Diminishing returns above 5. |
+| `max_tokens` | `256` | Maximum tokens per completion. | Matches the generation budget used in the UI. Increasing produces longer scripts but the judge criteria don't reward length. |
+| `frequency_penalty` | `0.5` | Penalizes token repetition within a completion. | Prevents the model from getting stuck in loops (a common failure mode at high temperature). 0.3–0.7 is reasonable. |
+| `BATCH_SIZE` | `8` | Concurrent async API requests. | Bounded by vLLM's `max-num-seqs` (32). Higher batches improve throughput but may increase latency per request. 8 is conservative. |
+| `model` | `"seinfeld"` | The SFT LoRA adapter served by vLLM. | Must match the adapter name in `server.py`. |
+
+#### Output
+
+`completions.jsonl` — 1,021 rows, each with `{prompt: [...], completions: [str, str, str]}`.
+
+Supports resume: if the output file already exists, appends from where it left off.
+
+#### Run
+
 ```bash
 SERVE_URL=https://pradeepiyer--nothing-gpt-serve-serve.modal.run/v1 \
 DPO_DATA_PATH=data/dpo \
 uv run python -m nothing_gpt.dpo.generate_pairs
 ```
 
-**GKE:** `k8s/dpo-generate-pairs.yaml` — Job using `ui:latest` image, CMD override, `SERVE_URL=http://nothing-gpt-serve:8000/v1`, GCS FUSE mount, no GPU.
-
-## Step 2: GPT-5 Judging
+## Stage 2: Preference Judging
 
 ### `nothing_gpt/dpo/judge.py`
 
-For each prompt's 3 completions, GPT-5 ranks them on:
-- **Faithfulness to Seinfeld scripts and characters** — Does the dialogue sound like it belongs in an actual Seinfeld episode? Does each character speak in their distinctive voice (Jerry's observational style, George's neurotic complaints, Elaine's sarcasm, Kramer's physicality and wild ideas)?
+An LLM judge ranks each prompt's 3 completions to produce (chosen, rejected) preference pairs.
 
-From each set of 3 completions, extracts the best (chosen) and worst (rejected) → 1 preference pair per prompt.
+#### Judging Criteria
 
-- Reads from `DPO_DATA_PATH/completions.jsonl`
-- Writes `train.jsonl` and `val.jsonl` to `DPO_DATA_PATH` (90/10 split, shuffled with seed)
-- Uses OpenAI SDK with `gpt-5` model
-- ~1,021 API calls to GPT-5
+The judge evaluates on a single composite criterion: **faithfulness to Seinfeld scripts and characters**:
+- Does the dialogue sound like it belongs in an actual Seinfeld episode?
+- Does each character speak in their distinctive voice (Jerry's observational style, George's neurotic complaints, Elaine's sarcasm, Kramer's physicality and wild ideas)?
+- Is the dialogue funny, coherent, and relevant to the scene context?
 
-**Local:**
+The judge returns `{best: <1|2|3>, worst: <1|2|3>}`. The best completion becomes "chosen", the worst becomes "rejected", and the middle one is discarded.
+
+#### Parameters
+
+| Parameter | Value | Impact | Tuning |
+|-----------|-------|--------|--------|
+| `JUDGE_MODEL` | `gemini-2.5-flash` | Which LLM ranks the completions. | Stronger models produce more consistent rankings. Gemini 2.5 Flash is used via the OpenAI-compatible endpoint at `generativelanguage.googleapis.com/v1beta/openai/`. GPT-4o or Claude would also work but at higher cost. |
+| `temperature` | `0` | Deterministic judging. | Should stay at 0. Non-zero temperature introduces ranking noise that directly degrades preference pair quality. |
+| `max_tokens` | `1024` | Token budget for judge response. | Gemini 2.5 Flash is a thinking model — it uses tokens for internal reasoning before producing the JSON response. 50 tokens caused empty responses. 1024 gives ample room. Non-thinking models can use 50. |
+| `VAL_RATIO` | `0.1` | Fraction of pairs held out for evaluation. | 10% gives 102 eval pairs — enough to track reward accuracy without wasting training data. |
+| `SEED` | `42` | Random seed for shuffle and split. | Fixed for reproducibility. Change if you want a different train/val partition. |
+| `BATCH_SIZE` | `16` | Concurrent async judge API requests. | Bounded by API rate limits. Gemini's free tier has low rate limits; paid tier handles 16 easily. |
+
+#### Gemini-Specific Handling
+
+1. **Markdown code fences**: Gemini wraps JSON responses in `` ```json ... ``` ``. The code strips these with a regex before parsing.
+2. **Thinking tokens**: Gemini 2.5 Flash uses tokens for chain-of-thought reasoning. The `max_tokens` budget must account for this (1024 vs 50 for non-thinking models).
+
+#### Output
+
+- `train.jsonl` — 919 preference pairs
+- `val.jsonl` — 102 preference pairs
+
+Each row: `{prompt: [{role, content}, ...], chosen: [{role: "assistant", content: ...}], rejected: [{role: "assistant", content: ...}]}`
+
+This is TRL's conversational DPO format.
+
+#### Data Quality
+
+From the first run (Gemini 2.5 Flash, 1,021 prompts):
+- **0 failures** — every prompt successfully judged
+- **0 degenerate pairs** — no cases where chosen == rejected or either was empty
+- **53.7% longer-is-chosen** — minimal length bias (random would be 50%)
+- Balanced character distribution across chosen and rejected
+
+#### Run
+
 ```bash
-OPENAI_API_KEY=... DPO_DATA_PATH=data/dpo \
+OPENAI_API_KEY=<gemini-key> \
+OPENAI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/ \
+DPO_DATA_PATH=data/dpo \
 uv run python -m nothing_gpt.dpo.judge
 ```
 
-**GKE:** `k8s/dpo-judge.yaml` — Job using `ui:latest` image, CMD override, `OPENAI_API_KEY` from k8s secret `openai-secret`, GCS FUSE mount, no GPU.
-
-## Step 3: DPO Training
+## Stage 3: DPO Training
 
 ### `nothing_gpt/dpo/train.py`
 
-Follows the `sft/train.py` pattern: standalone `train(callbacks=None)` function, uses constants for paths, has checkpoint resume logic.
+Trains the SFT adapter to prefer chosen completions over rejected ones using the DPO objective.
 
-```python
-# Dual-adapter setup for DPO
-model = PeftModel.from_pretrained(base, ADAPTER_PATH, adapter_name="train")
-model.load_adapter(ADAPTER_PATH, adapter_name="reference")
+### How DPO Works
 
-DPOConfig(
-    model_adapter_name="train",
-    ref_adapter_name="reference",
-    beta=0.1,                    # KL penalty strength
-    loss_type="sigmoid",         # Standard DPO loss
-    learning_rate=5e-6,          # 6x lower than SFT's 3e-5
-    num_train_epochs=1,
-    per_device_train_batch_size=4,
-    per_device_eval_batch_size=2,
-    gradient_accumulation_steps=4,
-    max_length=2048,
-    bf16=True,
-    lr_scheduler_type="cosine",
-    warmup_steps=20,
-    logging_steps=10,
-    eval_steps=25,
-    save_steps=25,
-    report_to="wandb",
-    output_dir="/vol/checkpoints/dpo-r32",
-)
+The DPO loss function is:
+
+```
+L_DPO = -log σ(β · (log π_θ(y_w|x) - log π_ref(y_w|x) - log π_θ(y_l|x) + log π_ref(y_l|x)))
 ```
 
-Key differences from SFT:
-- **LR 5e-6** (not 3e-5) — DPO diverges at higher LR
-- **Dual adapter** — reference adapter stays frozen, train adapter gets updated
-- **Preference data format** — `{prompt, chosen, rejected}` not `{prompt, completion}`
-- **beta=0.1** — controls how far the model can drift from the SFT reference
-- Reads from `DPO_DATA_PATH`, saves to `DPO_ADAPTER_PATH`
+Where `y_w` = chosen, `y_l` = rejected, `π_θ` = trainable model, `π_ref` = frozen reference model. The loss pushes the model to increase the log-probability gap between chosen and rejected, relative to the reference model.
 
-Memory: Fits on L4 (24GB). Second adapter is ~150MB, not a full model copy.
+### Model Setup
 
-### `nothing_gpt/modal/dpo_train.py`
+The SFT adapter is loaded onto the quantized base model with `is_trainable=True`. DPOTrainer internally creates a frozen copy as the reference model.
 
-Mirrors `modal/train.py` exactly:
-- App name: `"nothing-gpt-dpo-train"`
-- Same image (`train_image`), GPU (L4), timeout (86400), secrets, volumes
-- `VolumeCommitCallback` + `vol.commit()` after training
+```python
+base_model = AutoModelForCausalLM.from_pretrained(BASE_MODEL, quantization_config=bnb_config)
+model = PeftModel.from_pretrained(base_model, ADAPTER_PATH, is_trainable=True)
+```
 
-## Step 4: Serve DPO Adapter
+**Why not dual adapters?** The TRL docs suggest loading the SFT adapter twice (one trainable, one frozen) with `model_adapter_name` / `ref_adapter_name`. This failed with quantized models:
+1. `adapter_name="train"` collides with PyTorch's `nn.Module.train()` method
+2. Gradient checkpointing is incompatible with dual adapters (tensor shape mismatch during backward recomputation)
+3. `requires_grad` errors with quantized base weights
 
-### Modified: `nothing_gpt/serve/server.py`
+The reference model copy approach uses more VRAM (~1.7GB for a 3B model) but works reliably.
 
-Replace the single `LORA_CONFIG` with a function that builds a JSON list:
+### Quantization — `BitsAndBytesConfig`
+
+Same as SFT. See `docs/sft-pipeline.md`.
+
+| Parameter | Value |
+|-----------|-------|
+| `load_in_4bit` | `True` |
+| `bnb_4bit_quant_type` | `"nf4"` |
+| `bnb_4bit_compute_dtype` | `"bfloat16"` |
+| `bnb_4bit_use_double_quant` | `True` |
+
+### Training — `DPOConfig`
+
+| Parameter | Value | Impact | Tuning |
+|-----------|-------|--------|--------|
+| `beta` | `0.1` | KL penalty strength. Controls how far the model can drift from the reference. | **The most important DPO hyperparameter.** Lower beta (0.01–0.05) allows larger policy shifts — the model more aggressively changes its behavior, which can improve reward accuracy but risks forgetting SFT quality. Higher beta (0.3–0.5) constrains the model close to SFT — safer but weaker preference learning. 0.1 is the standard starting point. If rewards/accuracies is low (< 0.55), try decreasing beta to 0.05. If generations degrade in quality despite good reward accuracy, increase beta. |
+| `loss_type` | `"sigmoid"` | The DPO loss variant. | `"sigmoid"` is standard DPO (Rafailov et al. 2023). Alternatives: `"hinge"` (sharper gradient, less stable), `"ipo"` (identity preference optimization, different scaling). Sigmoid is the most studied and robust. |
+| `learning_rate` | `5e-6` | Peak learning rate. | 6× lower than SFT's 3e-5. DPO is more sensitive to LR because it's adjusting a fine-tuned model, not training from a pretrained base. Going higher (1e-5) risks divergence. Going lower (1e-6) would need more epochs. With 919 training examples and 58 steps per epoch, 5e-6 gives a conservative update budget. |
+| `num_train_epochs` | `1` | Passes through the training data. | With only 919 examples, a single epoch is 58 steps (at effective batch size 16). Multiple epochs risk overfitting on such a small dataset. If increasing the dataset size substantially (5,000+), 2–3 epochs may be worthwhile. |
+| `lr_scheduler_type` | `"cosine"` | LR decay schedule. | Cosine decays smoothly to near-zero by the end of training. Matches SFT. Linear works too but cosine gives a slower start and gentler finish. |
+| `warmup_steps` | `20` | Steps of linear LR warmup from 0 to peak. | 20 steps = 34% of a 58-step epoch. This is high — typical warmup is 5–10%. But with so few total steps, a long warmup prevents early instability. Could reduce to 10 if training more steps. |
+| `per_device_train_batch_size` | `2` | Micro-batch size. | Constrained by VRAM. DPO processes two sequences per example (chosen + rejected) plus the reference model copy, so each example costs ~2× the VRAM of an SFT example. Batch size 4 OOM'd. |
+| `per_device_eval_batch_size` | `1` | Eval micro-batch size. | Eval materializes logits for both chosen and rejected sequences. 1 is conservative but ensures no OOM during eval. |
+| `gradient_accumulation_steps` | `8` | Accumulation steps before an optimizer update. | Effective batch size = 2 × 8 = **16**. Matches SFT's effective batch size. Smaller effective batch sizes (< 8) produce noisy gradients; larger (> 32) waste steps on a 58-step epoch. |
+| `max_length` | `2048` | Maximum sequence length for chosen and rejected. | Matches SFT's training length. Sequences longer than this are truncated. Our data has P99=1062 tokens, so 2048 gives ample headroom. |
+| `bf16` | `True` | Use bfloat16 precision. | Required for L4 (native bf16 support). Eliminates need for GradScaler. |
+| `gradient_checkpointing` | `False` | Recompute activations during backward pass to save VRAM. | **Must be False for DPO with reference model copy.** Gradient checkpointing is incompatible with the internal reference model copy that DPOTrainer creates. Enabling it causes `CheckpointError: Recomputed values for tensors have different metadata`. |
+| `eval_steps` | `25` | Evaluate every N steps. | 25 steps = ~43% of the epoch. Gives 2 eval checkpoints during training. For a longer run, every 50 steps would be sufficient. |
+| `save_steps` | `25` | Checkpoint every N steps. | Aligned with eval_steps. Allows resuming from the best checkpoint if spot-preempted. |
+| `logging_steps` | `10` | Log metrics to WandB every N steps. | 10 steps = 6 log entries per epoch. Enough to see trends without excessive logging. |
+
+### Training Math
+
+| Metric | Value |
+|--------|-------|
+| Training examples | 919 |
+| Effective batch size | 16 (2 × 8) |
+| Steps per epoch | 919 ÷ 16 ≈ **58** |
+| Warmup | 20 steps (34% of epoch) |
+| Eval/save frequency | Every 25 steps (~2 evals per epoch) |
+| Total optimizer updates | ~58 |
+
+### Key Metrics to Monitor
+
+| Metric | Meaning | Healthy Range |
+|--------|---------|---------------|
+| `rewards/accuracies` | Fraction where model assigns higher reward to chosen vs rejected. | > 0.55 means the model is learning preferences. > 0.70 is strong. |
+| `rewards/margins` | Mean difference between chosen and rejected rewards. | Should be positive and increasing. Negative means the model prefers rejected. |
+| `rewards/chosen` | Implicit reward for chosen completions. | Should increase or stay stable. |
+| `rewards/rejected` | Implicit reward for rejected completions. | Should decrease relative to chosen. |
+| `logps/chosen` | Log-probability of chosen under the policy. | Increasing means the model assigns more probability to chosen completions. |
+| `logps/rejected` | Log-probability of rejected under the policy. | Should decrease or increase less than chosen. |
+| `eval_loss` | DPO loss on validation set. | Decreasing is good. Watch for divergence from train loss (overfitting). |
+
+### First Run Results
+
+| Metric | Value | Assessment |
+|--------|-------|------------|
+| Train loss | 1.547 | — |
+| Eval loss | 1.588 | Close to train loss, no overfitting |
+| Eval rewards/accuracies | 0.461 | Below 0.5 — model is not learning to prefer chosen |
+| Eval rewards/margins | -0.345 | Negative — model slightly prefers rejected |
+| Train runtime | 808s (~13.5 min) | — |
+
+The first run completed without errors but the model did not learn meaningful preferences. This is a known challenge with small datasets and weak preference signal.
+
+### What to Try Next
+
+Listed in order of expected impact:
+
+1. **Lower beta (0.05 or 0.01)**: With weak preference signal, the current beta=0.1 may constrain the model too tightly to the reference. A lower beta allows larger policy shifts per example, which can help when the chosen/rejected gap is small. Risk: too-low beta can cause the model to drift far from SFT quality.
+
+2. **Stronger judge model**: Gemini 2.5 Flash may not produce rankings with enough quality separation. A stronger judge (Gemini 2.5 Pro, GPT-4o, Claude Sonnet) could produce sharper chosen/rejected distinctions, giving the DPO loss a clearer gradient signal. Cost: ~$10–30 for 1,021 judge calls.
+
+3. **More completions per prompt (5 instead of 3)**: More completions increase the quality gap between best and worst. With 3 completions, the best and worst may be close in quality. With 5, the extremes are more pronounced. Cost: ~2× more vLLM generation time.
+
+4. **Higher generation temperature (1.0–1.2)**: Increases diversity of completions, making it easier for the judge to find clear winners and losers. Risk: temperatures above 1.2 degrade coherence.
+
+5. **More training data**: Generate and judge more prompts. Currently using only the 1,021 validation prompts from SFT. Could also sample from the 9,007 training prompts. More data gives the model more examples to learn from, reducing the chance of overfitting on noise.
+
+6. **Multiple epochs**: With only 58 optimizer updates, the model may not have enough steps to learn. Running 2–3 epochs with a lower LR (1e-6) would give 116–174 updates. Only viable if combined with a lower LR to avoid overfitting.
+
+7. **Adjust warmup**: 20 warmup steps out of 58 total means the model only trains at full LR for 38 steps. Reducing warmup to 5–10 gives more steps at peak LR.
+
+## Serving the DPO Adapter
+
+### `nothing_gpt/serve/server.py`
+
+The serve module conditionally includes the DPO adapter:
 
 ```python
 def _lora_modules() -> str:
@@ -121,113 +234,78 @@ def _lora_modules() -> str:
     return json.dumps(modules)
 ```
 
-`os.path.isdir` works on GCS FUSE with the `implicit-dirs` mount option already set in `serve.yaml`. DPO adapter is optional — serve works with just the SFT adapter.
+- `model="seinfeld"` — SFT adapter only
+- `model="seinfeld-dpo"` — SFT + DPO adapter
 
-No changes needed to `k8s/serve.yaml` (init container only checks SFT adapter), `modal/serve.py`, or `docker/serve.Dockerfile`.
+The DPO adapter is optional. If the directory doesn't exist, the server starts with just the SFT adapter.
 
-## New Constants
+`os.path.isdir` works on GCS FUSE with the `implicit-dirs` mount option set in `serve.yaml`.
 
-### Modified: `nothing_gpt/constants.py`
+## OOM Issues Encountered
+
+| Situation | Cause | Fix |
+|-----------|-------|-----|
+| Dual-adapter DPO | Reference adapter + train adapter + base model | Abandoned dual adapters; let DPOTrainer create reference copy |
+| `per_device_train_batch_size=4` | DPO processes chosen + rejected per example (2× SFT) plus reference model | Reduced to batch_size=2, grad_accum=8 |
+| `gradient_checkpointing=True` | Incompatible with DPOTrainer's internal reference model | Set to `False` |
+
+## Constants
 
 ```python
 DPO_ADAPTER_PATH = os.environ.get("DPO_ADAPTER_PATH", "/vol/adapters/nothing-gpt-dpo")
 DPO_DATA_PATH = os.environ.get("DPO_DATA_PATH", "/vol/data/dpo")
 ```
 
-## K8s Manifests
+## Running the Pipeline
 
-### `k8s/dpo-generate-pairs.yaml` — Job (no GPU)
+### Local (generate + judge) → GKE (train)
 
-- Image: `us-central1-docker.pkg.dev/nothing-gpt/nothing-gpt/ui:latest`
-- `command: ["python", "-m", "nothing_gpt.dpo.generate_pairs"]`
-- Env: `SERVE_URL=http://nothing-gpt-serve:8000/v1`
-- GCS FUSE mount at `/vol` (read-write)
-- Resources: 500m CPU, 512MB RAM
-- No init container (serve readiness handled by the serve deployment's readiness probe)
+```bash
+# 1. Generate completions (~20 min against Modal endpoint)
+SERVE_URL=https://pradeepiyer--nothing-gpt-serve-serve.modal.run/v1 \
+DPO_DATA_PATH=data/dpo \
+uv run python -m nothing_gpt.dpo.generate_pairs
 
-### `k8s/dpo-judge.yaml` — Job (no GPU)
+# 2. Judge with Gemini (~5 min)
+OPENAI_API_KEY=<gemini-key> \
+OPENAI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/ \
+DPO_DATA_PATH=data/dpo \
+uv run python -m nothing_gpt.dpo.judge
 
-- Image: `us-central1-docker.pkg.dev/nothing-gpt/nothing-gpt/ui:latest`
-- `command: ["python", "-m", "nothing_gpt.dpo.judge"]`
-- Env: `OPENAI_API_KEY` from k8s secret `openai-secret`
-- GCS FUSE mount at `/vol` (read-write)
-- Resources: 500m CPU, 512MB RAM
-- Init container waits for `/vol/data/dpo/completions.jsonl`
+# 3. Upload data to GCS
+gsutil cp data/dpo/train.jsonl data/dpo/val.jsonl gs://nothing-gpt-data/data/dpo/
 
-### `k8s/dpo-train.yaml` — Job (L4 GPU)
+# 4. Build and submit training job
+gcloud builds submit --config /dev/stdin . <<'EOF'
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'us-central1-docker.pkg.dev/nothing-gpt/nothing-gpt/train:latest',
+           '-f', 'docker/train.Dockerfile', '.']
+images:
+  - 'us-central1-docker.pkg.dev/nothing-gpt/nothing-gpt/train:latest'
+EOF
 
-Mirrors `k8s/sft-train.yaml` with two differences:
-- Init container waits for `/vol/data/dpo/train.jsonl`
-- `command: ["python3.13", "-m", "nothing_gpt.dpo.train"]`
+kubectl apply -f k8s/dpo-train.yaml
 
-Reuses `train:latest` Docker image. `trl>=0.15` already includes `DPOTrainer`. The `nothing_gpt` package (including the `dpo/` module) gets installed via `pip install .` in the existing Dockerfile.
+# 5. Monitor on WandB — watch rewards/accuracies and rewards/margins
+# 6. Test: call API with model="seinfeld-dpo"
+```
 
-## Files Summary
+### Modal
 
-| File | Action | Purpose |
-|------|--------|---------|
-| `nothing_gpt/constants.py` | Modify | Add `DPO_ADAPTER_PATH`, `DPO_DATA_PATH` |
-| `nothing_gpt/dpo/__init__.py` | Create | Package init |
-| `nothing_gpt/dpo/generate_pairs.py` | Create | Completion generation (local + GKE) |
-| `nothing_gpt/dpo/judge.py` | Create | GPT-5 preference ranking (local + GKE) |
-| `nothing_gpt/dpo/train.py` | Create | Core DPO training logic |
-| `nothing_gpt/modal/dpo_train.py` | Create | Modal wrapper for DPO training |
-| `k8s/dpo-generate-pairs.yaml` | Create | GKE Job (no GPU, uses `ui:latest`) |
-| `k8s/dpo-judge.yaml` | Create | GKE Job (no GPU, uses `ui:latest`) |
-| `k8s/dpo-train.yaml` | Create | GKE Job (L4 GPU, uses `train:latest`) |
-| `nothing_gpt/serve/server.py` | Modify | Conditional DPO LoRA module |
-| `pyproject.toml` | Modify | Add `nothing_gpt/dpo` to pyright exclude |
+```bash
+# Steps 1-2 same as above, then:
+modal volume put nothing-gpt-vol data/dpo/train.jsonl /data/dpo/train.jsonl
+modal volume put nothing-gpt-vol data/dpo/val.jsonl /data/dpo/val.jsonl
+uv run modal run --detach nothing_gpt.modal.dpo_train::train
+uv run modal deploy -m nothing_gpt.modal.serve
+```
 
-No new Dockerfiles needed. generate_pairs and judge reuse `ui:latest`, DPO training reuses `train:latest`.
+## Cost
 
-## Dependencies
-
-- `trl>=0.15` — already in train image
-- `openai` — already in UI image and pyproject.toml
-- `OPENAI_API_KEY` — needed for GPT-5 judging
-
-## Risks
-
-1. **DPOTrainer data format**: TRL expects `prompt`, `chosen`, `rejected` columns. Need to verify whether TRL's conversational DPO expects message lists or raw strings — will check during implementation.
-2. **`os.path.isdir` on GCS FUSE**: Should work with `implicit-dirs` mount option already set in `serve.yaml`. Low risk.
-
-## Cost Estimates
-
-- **Completions**: Free (our own vLLM endpoint)
-- **GPT-5 judging**: ~1,021 calls, estimate ~$5-15
-- **DPO training**: ~1-2 hours on L4 ($0.80/hr) = ~$1-2
-- **Total**: ~$7-17
-
-## Verification
-
-### GKE flow (end-to-end)
-1. `kubectl apply -f k8s/dpo-generate-pairs.yaml` — generates completions to GCS
-2. `kubectl apply -f k8s/dpo-judge.yaml` — ranks with GPT-5, writes train/val to GCS
-3. `kubectl apply -f k8s/dpo-train.yaml` — DPO training on L4
-4. Monitor on WandB — watch `rewards/margins` trending upward
-5. Redeploy serve (rebuild `train:latest` to pick up `dpo/` module, then rollout)
-6. Test: call API with `model="seinfeld-dpo"`
-
-### Modal flow
-1. Generate completions locally:
-   ```bash
-   SERVE_URL=https://pradeepiyer--nothing-gpt-serve-serve.modal.run/v1 \
-   DPO_DATA_PATH=data/dpo \
-   uv run python -m nothing_gpt.dpo.generate_pairs
-   ```
-2. Judge locally:
-   ```bash
-   OPENAI_API_KEY=... DPO_DATA_PATH=data/dpo \
-   uv run python -m nothing_gpt.dpo.judge
-   ```
-3. Upload to volume:
-   ```bash
-   modal volume put nothing-gpt-vol data/dpo/train.jsonl /data/dpo/train.jsonl
-   modal volume put nothing-gpt-vol data/dpo/val.jsonl /data/dpo/val.jsonl
-   ```
-4. Train: `uv run modal run --detach nothing_gpt.modal.dpo_train::train`
-5. Deploy: `uv run modal deploy -m nothing_gpt.modal.serve`
-6. Test: call API with `model="seinfeld-dpo"`
-
-### Local flow
-Same as Modal steps 1-2, then upload to GCS with `gsutil cp`.
+| Stage | Cost |
+|-------|------|
+| Completion generation | Free (own vLLM endpoint) |
+| Gemini 2.5 Flash judging (1,021 calls) | ~$0.50 |
+| DPO training (~13 min on L4 spot) | ~$0.20 |
+| **Total** | **~$0.70** |

@@ -1,42 +1,48 @@
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: batch/v1
+kind: Job
 metadata:
-  name: nothing-gpt-serve
+  name: nothing-gpt-dpo-train
 spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: nothing-gpt-serve
+  backoffLimit: 3
   template:
     metadata:
-      labels:
-        app: nothing-gpt-serve
       annotations:
         gke-gcsfuse/volumes: "true"
     spec:
       serviceAccountName: nothing-gpt-sa
+      restartPolicy: Never
       nodeSelector:
         cloud.google.com/gke-accelerator: nvidia-l4
+      tolerations:
+        - key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
       initContainers:
-        - name: wait-for-mount
+        - name: wait-for-data
           image: busybox:1.37
           command:
             - sh
             - -c
             - |
-              echo "Waiting for GCS FUSE mount..."
+              echo "Waiting for SFT adapter and DPO training data..."
               until [ -f /vol/adapters/nothing-gpt/adapter_config.json ]; do
-                echo "Mount not ready, retrying in 2s..."
+                echo "SFT adapter not ready, retrying in 2s..."
                 sleep 2
               done
-              echo "Mount ready, adapter files found"
+              echo "SFT adapter found"
+              until [ -f /vol/data/dpo/train.jsonl ]; do
+                echo "DPO data not ready, retrying in 2s..."
+                sleep 2
+              done
+              echo "DPO training data found"
           volumeMounts:
             - name: gcs-data
               mountPath: /vol
-              readOnly: true
       containers:
-        - name: serve
-          image: us-central1-docker.pkg.dev/nothing-gpt/nothing-gpt/serve:latest
+        - name: train
+          image: us-central1-docker.pkg.dev/nothing-gpt/nothing-gpt/train:latest
+          command: ["python3.13", "-m", "nothing_gpt.dpo.train"]
           resources:
             requests:
               cpu: "4"
@@ -44,46 +50,24 @@ spec:
               nvidia.com/gpu: "1"
             limits:
               nvidia.com/gpu: "1"
-          ports:
-            - containerPort: 8000
           env:
             - name: HF_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: hf-secret
                   key: HF_TOKEN
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 8000
-            initialDelaySeconds: 120
-            periodSeconds: 10
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 8000
-            initialDelaySeconds: 300
-            periodSeconds: 30
+            - name: WANDB_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: wandb-secret
+                  key: WANDB_API_KEY
           volumeMounts:
             - name: gcs-data
               mountPath: /vol
-              readOnly: true
       volumes:
         - name: gcs-data
           csi:
             driver: gcsfuse.csi.storage.gke.io
-            readOnly: true
             volumeAttributes:
               bucketName: nothing-gpt-data
               mountOptions: "implicit-dirs"
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: nothing-gpt-serve
-spec:
-  selector:
-    app: nothing-gpt-serve
-  ports:
-    - port: 8000
-      targetPort: 8000

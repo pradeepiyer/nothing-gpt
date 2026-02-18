@@ -33,7 +33,9 @@ pythonVersion = "3.13"
 venvPath = "."
 venv = ".venv"
 typeCheckingMode = "standard"
+include = ["nothing_gpt", "tests", "scripts"]
 exclude = [
+    "nothing_gpt/dpo",
     "nothing_gpt/modal",
     "nothing_gpt/sft",
     "nothing_gpt/ui",

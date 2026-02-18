@@ -37,6 +37,7 @@ spec:
       containers:
         - name: train
           image: us-central1-docker.pkg.dev/nothing-gpt/nothing-gpt/train:latest
+          command: ["python3.13", "-m", "nothing_gpt.sft.train"]
           resources:
             requests:
               cpu: "4"
