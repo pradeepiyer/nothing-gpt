@@ -10,13 +10,22 @@ from openai import AsyncOpenAI
 
 from nothing_gpt.constants import DPO_DATA_PATH
 
-JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "gemini-2.5-flash")
+JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "gemini-2.5-pro")
 VAL_RATIO = 0.1
 SEED = 42
 BATCH_SIZE = 16
+MIN_CONFIDENCE = 3
 
-JUDGE_PROMPT = """\
-You are evaluating Seinfeld script completions. Below are 3 completions for the same prompt.
+
+def build_judge_prompt(completions: list[str]) -> str:
+    """Build a judge prompt for N completions."""
+    n = len(completions)
+    completion_blocks = "\n\n".join(
+        f"Completion {i + 1}:\n{c}" for i, c in enumerate(completions)
+    )
+    range_str = "|".join(str(i + 1) for i in range(n))
+    return f"""\
+You are evaluating Seinfeld script completions. Below are {n} completions for the same prompt.
 
 Rate them on faithfulness to Seinfeld scripts and characters:
 - Does the dialogue sound like it belongs in an actual Seinfeld episode?
@@ -24,24 +33,19 @@ Rate them on faithfulness to Seinfeld scripts and characters:
 George's neurotic complaints, Elaine's sarcasm, Kramer's physicality and wild ideas)?
 - Is the dialogue funny, coherent, and relevant to the scene context?
 
-Respond with ONLY a JSON object: {{"best": <1|2|3>, "worst": <1|2|3>}}
+Respond with ONLY a JSON object: {{"best": <{range_str}>, "worst": <{range_str}>, "confidence": <1-5>}}
+"confidence" rates how distinguishable the best and worst completions are \
+(1 = nearly identical quality, 5 = clear quality difference).
 Do not include any other text.
 
-Completion 1:
-{c1}
-
-Completion 2:
-{c2}
-
-Completion 3:
-{c3}"""
+{completion_blocks}"""
 
 
 async def rank_completions(
     client: AsyncOpenAI, completions: list[str]
-) -> tuple[int, int]:
-    """Rank 3 completions via LLM judge. Returns (best_idx, worst_idx) as 0-based indices."""
-    prompt = JUDGE_PROMPT.format(c1=completions[0], c2=completions[1], c3=completions[2])
+) -> tuple[int, int, int]:
+    """Rank completions via LLM judge. Returns (best_idx, worst_idx, confidence)."""
+    prompt = build_judge_prompt(completions)
     response = await client.chat.completions.create(
         model=JUDGE_MODEL,
         messages=[{"role": "user", "content": prompt}],
@@ -54,7 +58,7 @@ async def rank_completions(
     if fence_match:
         text = fence_match.group(1)
     ranking = json.loads(text)
-    return int(ranking["best"]) - 1, int(ranking["worst"]) - 1
+    return int(ranking["best"]) - 1, int(ranking["worst"]) - 1, int(ranking["confidence"])
 
 
 def build_preference_pair(
@@ -83,6 +87,7 @@ async def _run(input_dir: str | None = None, output_dir: str | None = None) -> N
 
     total = len(rows)
     pairs: list[dict] = []
+    filtered = 0
     print(f"Judging {total} rows with {JUDGE_MODEL}")
 
     for batch_start in range(0, total, BATCH_SIZE):
@@ -90,12 +95,17 @@ async def _run(input_dir: str | None = None, output_dir: str | None = None) -> N
         tasks = [rank_completions(client, row["completions"]) for row in batch]
         rankings = await asyncio.gather(*tasks)
 
-        for row, (best_idx, worst_idx) in zip(batch, rankings):
+        for row, (best_idx, worst_idx, confidence) in zip(batch, rankings):
+            if confidence < MIN_CONFIDENCE:
+                filtered += 1
+                continue
             pair = build_preference_pair(row["prompt"], row["completions"], best_idx, worst_idx)
             pairs.append(pair)
 
         done = min(batch_start + BATCH_SIZE, total)
         print(f"[{done}/{total}] judged")
+
+    print(f"Filtered {filtered}/{total} low-confidence pairs (confidence < {MIN_CONFIDENCE})")
 
     # Shuffle and split
     rng = random.Random(SEED)

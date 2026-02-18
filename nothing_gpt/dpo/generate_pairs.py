@@ -10,7 +10,7 @@ from openai import AsyncOpenAI
 from nothing_gpt.constants import DATA_PATH, DPO_DATA_PATH
 
 SERVE_URL = os.environ.get("SERVE_URL", "http://nothing-gpt-serve:8000/v1")
-NUM_COMPLETIONS = 3
+NUM_COMPLETIONS = 5
 TEMPERATURE = 0.9
 BATCH_SIZE = 8
 
