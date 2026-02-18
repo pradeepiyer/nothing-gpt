@@ -12,7 +12,7 @@ from nothing_gpt.constants import DATA_PATH, DPO_DATA_PATH
 SERVE_URL = os.environ.get("SERVE_URL", "http://nothing-gpt-serve:8000/v1")
 NUM_COMPLETIONS = 5
 TEMPERATURE = 0.9
-BATCH_SIZE = 8
+BATCH_SIZE = 32
 
 
 def _parse_line(text: str) -> str | None:
@@ -21,14 +21,18 @@ def _parse_line(text: str) -> str | None:
     return text.strip() if match else None
 
 
-def load_prompts(val_path: str | None = None) -> list[list[dict]]:
-    """Load prompt message lists from val.jsonl."""
-    path = val_path or f"{DATA_PATH}/val.jsonl"
+def load_prompts(data_dir: str | None = None) -> list[list[dict]]:
+    """Load prompt message lists from train.jsonl and val.jsonl in data_dir."""
+    directory = data_dir or DATA_PATH
     prompts: list[list[dict]] = []
-    with open(path) as f:
-        for line in f:
-            row = json.loads(line)
-            prompts.append(row["prompt"])
+    for filename in ("train.jsonl", "val.jsonl"):
+        path = os.path.join(directory, filename)
+        if not os.path.exists(path):
+            continue
+        with open(path) as f:
+            for line in f:
+                row = json.loads(line)
+                prompts.append(row["prompt"])
     return prompts
 
 
@@ -52,12 +56,12 @@ async def generate_for_prompt(client: AsyncOpenAI, prompt: list[dict]) -> list[s
     return list(await asyncio.gather(*tasks))
 
 
-async def _run(val_path: str | None = None, output_dir: str | None = None) -> None:
+async def _run(data_dir: str | None = None, output_dir: str | None = None) -> None:
     out_dir = output_dir or DPO_DATA_PATH
     os.makedirs(out_dir, exist_ok=True)
 
     client = AsyncOpenAI(base_url=SERVE_URL, api_key="not-needed", timeout=300)
-    prompts = load_prompts(val_path)
+    prompts = load_prompts(data_dir)
     total = len(prompts)
 
     # Resume from existing output
@@ -87,9 +91,9 @@ async def _run(val_path: str | None = None, output_dir: str | None = None) -> No
     await client.close()
 
 
-def generate_pairs(val_path: str | None = None, output_dir: str | None = None) -> None:
+def generate_pairs(data_dir: str | None = None, output_dir: str | None = None) -> None:
     """Generate NUM_COMPLETIONS completions per prompt and write completions.jsonl."""
-    asyncio.run(_run(val_path, output_dir))
+    asyncio.run(_run(data_dir, output_dir))
 
 
 if __name__ == "__main__":

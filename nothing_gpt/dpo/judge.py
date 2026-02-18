@@ -13,7 +13,7 @@ from nothing_gpt.constants import DPO_DATA_PATH
 JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "gemini-2.5-pro")
 VAL_RATIO = 0.1
 SEED = 42
-BATCH_SIZE = 16
+BATCH_SIZE = 64
 MIN_CONFIDENCE = 3
 
 

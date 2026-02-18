@@ -39,33 +39,34 @@ class TestParseLine:
 
 
 class TestLoadPrompts:
-    def test_loads_prompts_from_jsonl(self):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-            prompt = [
+    def test_loads_prompts_from_both_files(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            prompt_a = [
                 {"role": "system", "content": SCRIPT_PROMPT},
                 {"role": "user", "content": "[JERRY] Hello"},
             ]
-            completion = [{"role": "assistant", "content": "[GEORGE] Hey"}]
-            f.write(json.dumps({"prompt": prompt, "completion": completion}) + "\n")
-            f.write(json.dumps({"prompt": prompt, "completion": completion}) + "\n")
-            path = f.name
+            prompt_b = [
+                {"role": "system", "content": SCRIPT_PROMPT},
+                {"role": "user", "content": "[GEORGE] Hey"},
+            ]
+            completion = [{"role": "assistant", "content": "[ELAINE] Hi"}]
 
-        try:
-            prompts = load_prompts(path)
-            assert len(prompts) == 2
-            assert prompts[0] == prompt
+            with open(os.path.join(data_dir, "train.jsonl"), "w") as f:
+                f.write(json.dumps({"prompt": prompt_a, "completion": completion}) + "\n")
+                f.write(json.dumps({"prompt": prompt_a, "completion": completion}) + "\n")
+
+            with open(os.path.join(data_dir, "val.jsonl"), "w") as f:
+                f.write(json.dumps({"prompt": prompt_b, "completion": completion}) + "\n")
+
+            prompts = load_prompts(data_dir)
+            assert len(prompts) == 3
+            assert prompts[0] == prompt_a
+            assert prompts[2] == prompt_b
             assert prompts[0][0]["role"] == "system"
-            assert prompts[0][1]["role"] == "user"
-        finally:
-            os.unlink(path)
 
-    def test_empty_file(self):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
-            path = f.name
-        try:
-            assert load_prompts(path) == []
-        finally:
-            os.unlink(path)
+    def test_empty_directory(self):
+        with tempfile.TemporaryDirectory() as data_dir:
+            assert load_prompts(data_dir) == []
 
 
 class TestBuildPreferencePair:
