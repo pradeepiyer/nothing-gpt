@@ -34,7 +34,7 @@ spec:
               mountPath: /vol
       containers:
         - name: judge
-          image: us-central1-docker.pkg.dev/nothing-gpt/nothing-gpt/generate:latest
+          image: us-central1-docker.pkg.dev/nothing-gpt/nothing-gpt/dpo:latest
           command:
             - sh
             - -c
