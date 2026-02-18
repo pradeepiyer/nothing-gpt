@@ -1,0 +1,55 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nothing-gpt-generate-pairs
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      annotations:
+        gke-gcsfuse/volumes: "true"
+    spec:
+      serviceAccountName: nothing-gpt-sa
+      restartPolicy: Never
+      tolerations:
+        - key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      initContainers:
+        - name: wait-for-data
+          image: busybox:1.37
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for training data..."
+              until [ -f /vol/data/train.jsonl ]; do
+                echo "train.jsonl not ready, retrying in 2s..."
+                sleep 2
+              done
+              echo "Training data found"
+          volumeMounts:
+            - name: gcs-data
+              mountPath: /vol
+      containers:
+        - name: generate
+          image: us-central1-docker.pkg.dev/nothing-gpt/nothing-gpt/generate:latest
+          command:
+            - sh
+            - -c
+            - python -m nothing_gpt.dpo.generate_pairs 2>&1 | tee /vol/logs/generate-pairs.log
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+          volumeMounts:
+            - name: gcs-data
+              mountPath: /vol
+      volumes:
+        - name: gcs-data
+          csi:
+            driver: gcsfuse.csi.storage.gke.io
+            volumeAttributes:
+              bucketName: nothing-gpt-data
+              mountOptions: "implicit-dirs"
