@@ -5,7 +5,7 @@ import json
 import os
 import re
 
-from openai import AsyncOpenAI
+from openai import APIConnectionError, AsyncOpenAI
 
 from nothing_gpt.constants import DATA_PATH, DPO_DATA_PATH
 
@@ -13,6 +13,8 @@ SERVE_URL = os.environ.get("SERVE_URL", "http://nothing-gpt-serve:8000/v1")
 NUM_COMPLETIONS = 5
 TEMPERATURE = 0.9
 BATCH_SIZE = 32
+MAX_RETRIES = 5
+RETRY_BASE_DELAY = 5
 
 
 def _parse_line(text: str) -> str | None:
@@ -38,16 +40,25 @@ def load_prompts(data_dir: str | None = None) -> list[list[dict]]:
 
 async def generate_completion(client: AsyncOpenAI, prompt: list[dict]) -> str:
     """Generate a single completion, filtering to valid [CHARACTER] lines."""
-    response = await client.chat.completions.create(
-        model="seinfeld",
-        messages=prompt,
-        max_tokens=256,
-        temperature=TEMPERATURE,
-        frequency_penalty=0.5,
-    )
-    text = response.choices[0].message.content or ""
-    lines = [_parse_line(line) for line in text.strip().split("\n")]
-    return "\n".join(line for line in lines if line)
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = await client.chat.completions.create(
+                model="seinfeld",
+                messages=prompt,
+                max_tokens=256,
+                temperature=TEMPERATURE,
+                frequency_penalty=0.5,
+            )
+            text = response.choices[0].message.content or ""
+            lines = [_parse_line(line) for line in text.strip().split("\n")]
+            return "\n".join(line for line in lines if line)
+        except APIConnectionError:
+            if attempt == MAX_RETRIES - 1:
+                raise
+            delay = RETRY_BASE_DELAY * (2**attempt)
+            print(f"Connection error, retrying in {delay}s (attempt {attempt + 1}/{MAX_RETRIES})", flush=True)
+            await asyncio.sleep(delay)
+    return ""  # unreachable, satisfies type checker
 
 
 async def generate_for_prompt(client: AsyncOpenAI, prompt: list[dict]) -> list[str]:
@@ -71,7 +82,7 @@ async def _run(data_dir: str | None = None, output_dir: str | None = None) -> No
         with open(output_path) as f:
             already_done = sum(1 for _ in f)
     if already_done:
-        print(f"Resuming from {already_done}/{total}")
+        print(f"Resuming from {already_done}/{total}", flush=True)
 
     with open(output_path, "a") as f:
         for batch_start in range(already_done, total, BATCH_SIZE):
@@ -85,9 +96,9 @@ async def _run(data_dir: str | None = None, output_dir: str | None = None) -> No
             f.flush()
 
             done = min(batch_start + BATCH_SIZE, total)
-            print(f"[{done}/{total}] prompts completed")
+            print(f"[{done}/{total}] prompts completed", flush=True)
 
-    print(f"Wrote {total} rows to {output_path}")
+    print(f"Wrote {total} rows to {output_path}", flush=True)
     await client.close()
 
 
