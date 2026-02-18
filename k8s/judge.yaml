@@ -11,11 +11,6 @@ spec:
     spec:
       serviceAccountName: nothing-gpt-sa
       restartPolicy: Never
-      tolerations:
-        - key: cloud.google.com/gke-spot
-          operator: Equal
-          value: "true"
-          effect: NoSchedule
       initContainers:
         - name: wait-for-data
           image: busybox:1.37
