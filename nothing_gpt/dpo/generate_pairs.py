@@ -12,7 +12,8 @@ from nothing_gpt.constants import DPO_DATA_PATH, SFT_DATA_PATH
 SERVE_URL = os.environ.get("SERVE_URL", "http://nothing-gpt-serve:8000/v1")
 NUM_COMPLETIONS = 5
 TEMPERATURE = 0.9
-BATCH_SIZE = 32
+MAX_CONCURRENT_PROMPTS = 32
+FLUSH_INTERVAL = 32
 MAX_RETRIES = 5
 RETRY_BASE_DELAY = 5
 
@@ -85,18 +86,22 @@ async def _run(data_dir: str | None = None, output_dir: str | None = None) -> No
         print(f"Resuming from {already_done}/{total}", flush=True)
 
     with open(output_path, "a") as f:
-        for batch_start in range(already_done, total, BATCH_SIZE):
-            batch = prompts[batch_start : batch_start + BATCH_SIZE]
-            tasks = [generate_for_prompt(client, prompt) for prompt in batch]
-            results = await asyncio.gather(*tasks)
+        sem = asyncio.Semaphore(MAX_CONCURRENT_PROMPTS)
+        completed = 0
 
-            for prompt, completions in zip(batch, results):
-                row = {"prompt": prompt, "completions": completions}
-                f.write(json.dumps(row) + "\n")
-            f.flush()
+        async def process_prompt(prompt: list[dict]) -> None:
+            nonlocal completed
+            async with sem:
+                completions = await generate_for_prompt(client, prompt)
+            row = {"prompt": prompt, "completions": completions}
+            f.write(json.dumps(row) + "\n")
+            completed += 1
+            if completed % FLUSH_INTERVAL == 0:
+                f.flush()
+                print(f"[{already_done + completed}/{total}] prompts completed", flush=True)
 
-            done = min(batch_start + BATCH_SIZE, total)
-            print(f"[{done}/{total}] prompts completed", flush=True)
+        await asyncio.gather(*(process_prompt(p) for p in prompts[already_done:]))
+        f.flush()
 
     print(f"Wrote {total} rows to {output_path}", flush=True)
     await client.close()
