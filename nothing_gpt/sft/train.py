@@ -8,7 +8,7 @@ from peft import LoraConfig
 from transformers import BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
 
-from nothing_gpt.constants import ADAPTER_PATH, BASE_MODEL, DATA_PATH
+from nothing_gpt.constants import ADAPTER_PATH, BASE_MODEL, SFT_DATA_PATH
 
 
 def train(callbacks: list | None = None) -> None:
@@ -30,8 +30,8 @@ def train(callbacks: list | None = None) -> None:
     dataset = load_dataset(
         "json",
         data_files={
-            "train": f"{DATA_PATH}/train.jsonl",
-            "validation": f"{DATA_PATH}/val.jsonl",
+            "train": f"{SFT_DATA_PATH}/train.jsonl",
+            "validation": f"{SFT_DATA_PATH}/val.jsonl",
         },
     )
 

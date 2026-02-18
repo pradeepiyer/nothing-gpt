@@ -13,5 +13,5 @@ SCRIPT_PROMPT = (
 BASE_MODEL = "meta-llama/Llama-3.2-3B-Instruct"
 ADAPTER_PATH = os.environ.get("ADAPTER_PATH", "/vol/adapters/nothing-gpt")
 DPO_ADAPTER_PATH = os.environ.get("DPO_ADAPTER_PATH", "/vol/adapters/nothing-gpt-dpo")
-DATA_PATH = os.environ.get("DATA_PATH", "/vol/data")
+SFT_DATA_PATH = os.environ.get("SFT_DATA_PATH", "/vol/data/sft")
 DPO_DATA_PATH = os.environ.get("DPO_DATA_PATH", "/vol/data/dpo")

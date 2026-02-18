@@ -11,7 +11,7 @@ from nothing_gpt.constants import SCRIPT_PROMPT
 from nothing_gpt.data.parse import DialogueTurn, Episode
 
 PROCESSED_DIR = Path(__file__).parent.parent.parent.parent / "data" / "processed"
-TRAINING_DIR = Path(__file__).parent.parent.parent.parent / "data" / "training"
+SFT_DIR = Path(__file__).parent.parent.parent.parent / "data" / "sft"
 
 CONTEXT_TURNS = 5  # Turns given as user prompt (context)
 WINDOW_SIZE = 35  # Total turns per window (context + completion)
@@ -126,7 +126,7 @@ def split_episodes_by_id(
 
 def format_dataset(
     dialogues_path: Path = PROCESSED_DIR / "dialogues.jsonl",
-    output_dir: Path = TRAINING_DIR,
+    output_dir: Path = SFT_DIR,
     val_ratio: float = VAL_RATIO,
 ) -> tuple[Path, Path]:
     """Load parsed dialogues and produce train/val JSONL files."""

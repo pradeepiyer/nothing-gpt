@@ -7,7 +7,7 @@ import re
 
 from openai import APIConnectionError, AsyncOpenAI
 
-from nothing_gpt.constants import DATA_PATH, DPO_DATA_PATH
+from nothing_gpt.constants import DPO_DATA_PATH, SFT_DATA_PATH
 
 SERVE_URL = os.environ.get("SERVE_URL", "http://nothing-gpt-serve:8000/v1")
 NUM_COMPLETIONS = 5
@@ -25,7 +25,7 @@ def _parse_line(text: str) -> str | None:
 
 def load_prompts(data_dir: str | None = None) -> list[list[dict]]:
     """Load prompt message lists from train.jsonl and val.jsonl in data_dir."""
-    directory = data_dir or DATA_PATH
+    directory = data_dir or SFT_DATA_PATH
     prompts: list[list[dict]] = []
     for filename in ("train.jsonl", "val.jsonl"):
         path = os.path.join(directory, filename)
