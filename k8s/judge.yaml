@@ -1,0 +1,63 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nothing-gpt-judge
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      annotations:
+        gke-gcsfuse/volumes: "true"
+    spec:
+      serviceAccountName: nothing-gpt-sa
+      restartPolicy: Never
+      tolerations:
+        - key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      initContainers:
+        - name: wait-for-data
+          image: busybox:1.37
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for completions data..."
+              until [ -f /vol/data/dpo/completions.jsonl ]; do
+                echo "completions.jsonl not ready, retrying in 2s..."
+                sleep 2
+              done
+              echo "Completions data found"
+          volumeMounts:
+            - name: gcs-data
+              mountPath: /vol
+      containers:
+        - name: judge
+          image: us-central1-docker.pkg.dev/nothing-gpt/nothing-gpt/generate:latest
+          command:
+            - sh
+            - -c
+            - python -m nothing_gpt.dpo.judge 2>&1 | tee /vol/logs/judge.log
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: gemini-secret
+                  key: GEMINI_API_KEY
+            - name: OPENAI_BASE_URL
+              value: "https://generativelanguage.googleapis.com/v1beta/openai/"
+          volumeMounts:
+            - name: gcs-data
+              mountPath: /vol
+      volumes:
+        - name: gcs-data
+          csi:
+            driver: gcsfuse.csi.storage.gke.io
+            volumeAttributes:
+              bucketName: nothing-gpt-data
+              mountOptions: "implicit-dirs"
