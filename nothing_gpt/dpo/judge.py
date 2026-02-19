@@ -16,7 +16,7 @@ RETRY_BASE_DELAY = 2
 JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "gemini-2.5-flash")
 VAL_RATIO = 0.1
 SEED = 42
-MAX_CONCURRENT = 10
+MAX_CONCURRENT = 50
 FLUSH_INTERVAL = 32
 MIN_CONFIDENCE = 3
 
@@ -59,9 +59,10 @@ async def rank_completions(
                     temperature=0,
                     max_tokens=8192,
                 )
-            text = response.choices[0].message.content or ""
+            choice = response.choices[0]
+            text = (choice.message.content if choice.message else None) or ""
             if not text.strip():
-                raise ValueError(f"Empty response from model (finish_reason={response.choices[0].finish_reason})")
+                raise ValueError(f"Empty response from model (finish_reason={choice.finish_reason})")
             # Strip markdown code fences if present (e.g. ```json ... ```)
             fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
             if fence_match:
