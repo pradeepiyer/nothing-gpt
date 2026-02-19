@@ -13,7 +13,7 @@ from nothing_gpt.constants import DPO_DATA_PATH
 MAX_RETRIES = 5
 RETRY_BASE_DELAY = 2
 
-JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "gemini-2.5-flash")
+JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "gemini-2.5-pro")
 VAL_RATIO = 0.1
 SEED = 42
 MAX_CONCURRENT = 50
@@ -109,33 +109,63 @@ async def _run(input_dir: str | None = None, output_dir: str | None = None) -> N
             rows.append(json.loads(line))
 
     total = len(rows)
-    pairs: list[dict] = []
-    filtered = 0
-    completed = 0
     sem = asyncio.Semaphore(MAX_CONCURRENT)
+
+    # Resume from existing output
+    judged_path = os.path.join(out_dir, "judged.jsonl")
+    already_done = 0
+    if os.path.exists(judged_path):
+        with open(judged_path) as f:
+            already_done = sum(1 for _ in f)
+    if already_done:
+        print(f"Resuming from {already_done}/{total}", flush=True)
+
     print(f"Judging {total} rows with {JUDGE_MODEL}")
+
+    completed = 0
+    filtered = 0
+    buffer: list[str] = []
 
     async def process_row(row: dict) -> None:
         nonlocal completed, filtered
         ranking = await rank_completions(client, sem, row["completions"])
         if ranking is None:
             filtered += 1
+            buffer.append(json.dumps({"filtered": True}))
         else:
             best_idx, worst_idx, confidence = ranking
             if confidence < MIN_CONFIDENCE:
                 filtered += 1
+                buffer.append(json.dumps({"filtered": True}))
             else:
                 pair = build_preference_pair(row["prompt"], row["completions"], best_idx, worst_idx)
-                pairs.append(pair)
+                buffer.append(json.dumps(pair))
         completed += 1
         if completed % FLUSH_INTERVAL == 0:
-            print(f"[{completed}/{total}] judged", flush=True)
+            with open(judged_path, "a") as f:
+                f.write("\n".join(buffer) + "\n")
+            buffer.clear()
+            print(f"[{already_done + completed}/{total}] judged", flush=True)
 
-    await asyncio.gather(*(process_row(row) for row in rows))
-    print(f"[{completed}/{total}] judged", flush=True)
-    print(f"Filtered {filtered}/{total} low-confidence pairs (confidence < {MIN_CONFIDENCE})")
+    await asyncio.gather(*(process_row(row) for row in rows[already_done:]))
+    if buffer:
+        with open(judged_path, "a") as f:
+            f.write("\n".join(buffer) + "\n")
+    print(f"[{total}/{total}] judged", flush=True)
 
-    # Shuffle and split
+    # Load all judged pairs, filter, shuffle, and split
+    pairs: list[dict] = []
+    filtered_total = 0
+    with open(judged_path) as f:
+        for line in f:
+            row = json.loads(line)
+            if row.get("filtered"):
+                filtered_total += 1
+            else:
+                pairs.append(row)
+
+    print(f"Filtered {filtered_total}/{total} low-confidence pairs (confidence < {MIN_CONFIDENCE})")
+
     rng = random.Random(SEED)
     rng.shuffle(pairs)
     n_val = max(1, int(len(pairs) * VAL_RATIO))
