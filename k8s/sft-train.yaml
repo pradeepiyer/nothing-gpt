@@ -3,7 +3,7 @@ kind: Job
 metadata:
   name: nothing-gpt-sft-train
 spec:
-  backoffLimit: 3
+  backoffLimit: 5
   template:
     metadata:
       annotations:
