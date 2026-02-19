@@ -6,14 +6,18 @@ import os
 import random
 import re
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, RateLimitError
 
 from nothing_gpt.constants import DPO_DATA_PATH
 
-JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "gemini-2.5-pro")
+MAX_RETRIES = 5
+RETRY_BASE_DELAY = 2
+
+JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "gemini-2.5-flash")
 VAL_RATIO = 0.1
 SEED = 42
-BATCH_SIZE = 64
+MAX_CONCURRENT = 10
+FLUSH_INTERVAL = 32
 MIN_CONFIDENCE = 3
 
 
@@ -42,23 +46,41 @@ Do not include any other text.
 
 
 async def rank_completions(
-    client: AsyncOpenAI, completions: list[str]
-) -> tuple[int, int, int]:
-    """Rank completions via LLM judge. Returns (best_idx, worst_idx, confidence)."""
+    client: AsyncOpenAI, sem: asyncio.Semaphore, completions: list[str]
+) -> tuple[int, int, int] | None:
+    """Rank completions via LLM judge. Returns (best_idx, worst_idx, confidence) or None on failure."""
     prompt = build_judge_prompt(completions)
-    response = await client.chat.completions.create(
-        model=JUDGE_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0,
-        max_tokens=1024,
-    )
-    text = response.choices[0].message.content or ""
-    # Strip markdown code fences if present (e.g. ```json ... ```)
-    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-    if fence_match:
-        text = fence_match.group(1)
-    ranking = json.loads(text)
-    return int(ranking["best"]) - 1, int(ranking["worst"]) - 1, int(ranking["confidence"])
+    for attempt in range(MAX_RETRIES):
+        try:
+            async with sem:
+                response = await client.chat.completions.create(
+                    model=JUDGE_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0,
+                    max_tokens=8192,
+                )
+            text = response.choices[0].message.content or ""
+            if not text.strip():
+                raise ValueError(f"Empty response from model (finish_reason={response.choices[0].finish_reason})")
+            # Strip markdown code fences if present (e.g. ```json ... ```)
+            fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+            if fence_match:
+                text = fence_match.group(1)
+            ranking = json.loads(text)
+            return int(ranking["best"]) - 1, int(ranking["worst"]) - 1, int(ranking["confidence"])
+        except RateLimitError as e:
+            delay = 30 * (attempt + 1)
+            print(f"Rate limited, retrying in {delay}s (attempt {attempt + 1}/{MAX_RETRIES}): {e}", flush=True)
+            await asyncio.sleep(delay)
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            if attempt == MAX_RETRIES - 1:
+                print(f"Failed to parse judge response after {MAX_RETRIES} attempts: {e}", flush=True)
+                return None
+            delay = RETRY_BASE_DELAY * (2**attempt)
+            print(f"Parse error, retrying in {delay}s (attempt {attempt + 1}/{MAX_RETRIES}): {e}", flush=True)
+            await asyncio.sleep(delay)
+    print(f"Failed after {MAX_RETRIES} attempts (rate limited)", flush=True)
+    return None
 
 
 def build_preference_pair(
@@ -88,23 +110,28 @@ async def _run(input_dir: str | None = None, output_dir: str | None = None) -> N
     total = len(rows)
     pairs: list[dict] = []
     filtered = 0
+    completed = 0
+    sem = asyncio.Semaphore(MAX_CONCURRENT)
     print(f"Judging {total} rows with {JUDGE_MODEL}")
 
-    for batch_start in range(0, total, BATCH_SIZE):
-        batch = rows[batch_start : batch_start + BATCH_SIZE]
-        tasks = [rank_completions(client, row["completions"]) for row in batch]
-        rankings = await asyncio.gather(*tasks)
-
-        for row, (best_idx, worst_idx, confidence) in zip(batch, rankings):
+    async def process_row(row: dict) -> None:
+        nonlocal completed, filtered
+        ranking = await rank_completions(client, sem, row["completions"])
+        if ranking is None:
+            filtered += 1
+        else:
+            best_idx, worst_idx, confidence = ranking
             if confidence < MIN_CONFIDENCE:
                 filtered += 1
-                continue
-            pair = build_preference_pair(row["prompt"], row["completions"], best_idx, worst_idx)
-            pairs.append(pair)
+            else:
+                pair = build_preference_pair(row["prompt"], row["completions"], best_idx, worst_idx)
+                pairs.append(pair)
+        completed += 1
+        if completed % FLUSH_INTERVAL == 0:
+            print(f"[{completed}/{total}] judged", flush=True)
 
-        done = min(batch_start + BATCH_SIZE, total)
-        print(f"[{done}/{total}] judged")
-
+    await asyncio.gather(*(process_row(row) for row in rows))
+    print(f"[{completed}/{total}] judged", flush=True)
     print(f"Filtered {filtered}/{total} low-confidence pairs (confidence < {MIN_CONFIDENCE})")
 
     # Shuffle and split
