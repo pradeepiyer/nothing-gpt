@@ -10,15 +10,14 @@ from openai import AsyncOpenAI, RateLimitError
 
 from nothing_gpt.constants import DPO_DATA_PATH
 
-MAX_RETRIES = 5
-RETRY_BASE_DELAY = 2
-
 JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "gemini-2.5-pro")
 VAL_RATIO = 0.1
 SEED = 42
 MAX_CONCURRENT = 50
 FLUSH_INTERVAL = 32
 MIN_CONFIDENCE = 3
+MAX_RETRIES = 5
+RETRY_BASE_DELAY = 2
 
 
 def build_judge_prompt(completions: list[str]) -> str:
@@ -57,7 +56,7 @@ async def rank_completions(
                     model=JUDGE_MODEL,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0,
-                    max_tokens=8192,
+                    max_tokens=2048,
                 )
             choice = response.choices[0]
             text = (choice.message.content if choice.message else None) or ""
@@ -68,7 +67,14 @@ async def rank_completions(
             if fence_match:
                 text = fence_match.group(1)
             ranking = json.loads(text)
-            return int(ranking["best"]) - 1, int(ranking["worst"]) - 1, int(ranking["confidence"])
+            best_idx = int(ranking["best"]) - 1
+            worst_idx = int(ranking["worst"]) - 1
+            n = len(completions)
+            if not (0 <= best_idx < n and 0 <= worst_idx < n):
+                raise ValueError(f"Index out of range: best={best_idx}, worst={worst_idx}, n={n}")
+            if best_idx == worst_idx:
+                raise ValueError(f"best and worst are the same index: {best_idx}")
+            return best_idx, worst_idx, int(ranking["confidence"])
         except RateLimitError as e:
             delay = 30 * (attempt + 1)
             print(f"Rate limited, retrying in {delay}s (attempt {attempt + 1}/{MAX_RETRIES}): {e}", flush=True)
@@ -100,7 +106,7 @@ async def _run(input_dir: str | None = None, output_dir: str | None = None) -> N
     out_dir = output_dir or DPO_DATA_PATH
     os.makedirs(out_dir, exist_ok=True)
 
-    client = AsyncOpenAI(timeout=120)
+    client = AsyncOpenAI(timeout=300)
 
     completions_path = os.path.join(data_dir, "completions.jsonl")
     rows: list[dict] = []
@@ -123,19 +129,16 @@ async def _run(input_dir: str | None = None, output_dir: str | None = None) -> N
     print(f"Judging {total} rows with {JUDGE_MODEL}")
 
     completed = 0
-    filtered = 0
     buffer: list[str] = []
 
     async def process_row(row: dict) -> None:
-        nonlocal completed, filtered
+        nonlocal completed
         ranking = await rank_completions(client, sem, row["completions"])
         if ranking is None:
-            filtered += 1
             buffer.append(json.dumps({"filtered": True}))
         else:
             best_idx, worst_idx, confidence = ranking
             if confidence < MIN_CONFIDENCE:
-                filtered += 1
                 buffer.append(json.dumps({"filtered": True}))
             else:
                 pair = build_preference_pair(row["prompt"], row["completions"], best_idx, worst_idx)
