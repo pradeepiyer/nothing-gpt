@@ -13,10 +13,7 @@ def _lora_modules() -> list[str]:
     modules = [{"name": "seinfeld", "path": ADAPTER_PATH}]
     if os.path.isdir(DPO_ADAPTER_PATH):
         modules.append({"name": "seinfeld-dpo", "path": DPO_ADAPTER_PATH})
-    args = []
-    for module in modules:
-        args.extend(["--lora-modules", json.dumps(module)])
-    return args
+    return ["--lora-modules"] + [json.dumps(m) for m in modules]
 
 
 def serve(background: bool = False) -> None:
