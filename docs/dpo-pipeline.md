@@ -13,7 +13,7 @@ SFT val.jsonl (1,021 prompts)
     → generate_pairs.py: 3 completions per prompt via vLLM endpoint
     → judge.py: LLM judge ranks completions → chosen/rejected pairs
     → train.py: DPO training on preference pairs
-    → Serve DPO adapter alongside SFT adapter (model="seinfeld-dpo")
+    → Serve DPO adapter (model="seinfeld")
 ```
 
 ## Stage 1: Completion Generation
@@ -126,7 +126,7 @@ The SFT adapter is loaded onto the quantized base model with `is_trainable=True`
 
 ```python
 base_model = AutoModelForCausalLM.from_pretrained(BASE_MODEL, quantization_config=bnb_config)
-model = PeftModel.from_pretrained(base_model, ADAPTER_PATH, is_trainable=True)
+model = PeftModel.from_pretrained(base_model, SFT_ADAPTER_PATH, is_trainable=True)
 ```
 
 **Why not dual adapters?** The TRL docs suggest loading the SFT adapter twice (one trainable, one frozen) with `model_adapter_name` / `ref_adapter_name`. This failed with quantized models:
@@ -224,22 +224,13 @@ Listed in order of expected impact:
 
 ### `nothing_gpt/serve/server.py`
 
-The serve module conditionally includes the DPO adapter:
+The serve module serves the DPO adapter as `model="seinfeld"`:
 
 ```python
-def _lora_modules() -> str:
-    modules = [{"name": "seinfeld", "path": ADAPTER_PATH}]
-    if os.path.isdir(DPO_ADAPTER_PATH):
-        modules.append({"name": "seinfeld-dpo", "path": DPO_ADAPTER_PATH})
-    return json.dumps(modules)
+lora_module = json.dumps({"name": "seinfeld", "path": ADAPTER_PATH})
 ```
 
-- `model="seinfeld"` — SFT adapter only
-- `model="seinfeld-dpo"` — SFT + DPO adapter
-
-The DPO adapter is optional. If the directory doesn't exist, the server starts with just the SFT adapter.
-
-`os.path.isdir` works on GCS FUSE with the `implicit-dirs` mount option set in `serve.yaml`.
+`ADAPTER_PATH` defaults to `/vol/adapters/nothing-gpt` (the DPO adapter). The SFT intermediate is at `/vol/adapters/nothing-gpt-sft`.
 
 ## OOM Issues Encountered
 
@@ -252,7 +243,8 @@ The DPO adapter is optional. If the directory doesn't exist, the server starts w
 ## Constants
 
 ```python
-DPO_ADAPTER_PATH = os.environ.get("DPO_ADAPTER_PATH", "/vol/adapters/nothing-gpt-dpo")
+SFT_ADAPTER_PATH = os.environ.get("SFT_ADAPTER_PATH", "/vol/adapters/nothing-gpt-sft")
+ADAPTER_PATH = os.environ.get("ADAPTER_PATH", "/vol/adapters/nothing-gpt")
 DPO_DATA_PATH = os.environ.get("DPO_DATA_PATH", "/vol/data/dpo")
 ```
 
@@ -288,7 +280,7 @@ EOF
 kubectl apply -f k8s/dpo-train.yaml
 
 # 5. Monitor on WandB — watch rewards/accuracies and rewards/margins
-# 6. Test: call API with model="seinfeld-dpo"
+# 6. Test: call API with model="seinfeld"
 ```
 
 ### Modal

@@ -26,7 +26,7 @@ spec:
             - -c
             - |
               echo "Waiting for SFT adapter and DPO training data..."
-              until [ -f /vol/adapters/nothing-gpt/adapter_config.json ]; do
+              until [ -f /vol/adapters/nothing-gpt-sft/adapter_config.json ]; do
                 echo "SFT adapter not ready, retrying in 2s..."
                 sleep 2
               done

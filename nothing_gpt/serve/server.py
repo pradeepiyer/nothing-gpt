@@ -1,22 +1,14 @@
 """Serve fine-tuned Seinfeld model via vLLM."""
 
 import json
-import os
 import subprocess
 import sys
 
-from nothing_gpt.constants import ADAPTER_PATH, BASE_MODEL, DPO_ADAPTER_PATH
-
-
-def _lora_modules() -> list[str]:
-    """Build LoRA module args, conditionally including the DPO adapter."""
-    modules = [{"name": "seinfeld", "path": ADAPTER_PATH}]
-    if os.path.isdir(DPO_ADAPTER_PATH):
-        modules.append({"name": "seinfeld-dpo", "path": DPO_ADAPTER_PATH})
-    return ["--lora-modules"] + [json.dumps(m) for m in modules]
+from nothing_gpt.constants import ADAPTER_PATH, BASE_MODEL
 
 
 def serve(background: bool = False) -> None:
+    lora_module = json.dumps({"name": "seinfeld", "path": ADAPTER_PATH})
     cmd = [
         sys.executable, "-m", "vllm.entrypoints.openai.api_server",
         "--model", BASE_MODEL,
@@ -25,7 +17,7 @@ def serve(background: bool = False) -> None:
         "--max-model-len", "2048",
         "--enable-lora",
         "--max-lora-rank", "32",
-        *_lora_modules(),
+        "--lora-modules", lora_module,
         "--dtype", "half",
         "--max-num-seqs", "32",
         "--gpu-memory-utilization", "0.95",

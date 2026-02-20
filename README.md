@@ -118,7 +118,7 @@ kubectl apply -f k8s/dpo-train.yaml
 
 vLLM with LoRA adapter, OpenAI-compatible API. Config: max-model-len=2048, max-lora-rank=32, enforce-eager, gpu-memory-utilization=0.95, L4 GPU.
 
-Serves two adapters: `seinfeld` (SFT) and `seinfeld-dpo` (DPO, if present).
+Serves the DPO adapter as `model="seinfeld"`.
 
 ```bash
 # Modal

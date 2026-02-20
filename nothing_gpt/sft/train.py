@@ -8,7 +8,7 @@ from peft import LoraConfig
 from transformers import BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
 
-from nothing_gpt.constants import ADAPTER_PATH, BASE_MODEL, SFT_DATA_PATH
+from nothing_gpt.constants import BASE_MODEL, SFT_ADAPTER_PATH, SFT_DATA_PATH
 
 
 def train(callbacks: list | None = None) -> None:
@@ -80,8 +80,8 @@ def train(callbacks: list | None = None) -> None:
     trainer.train(resume_from_checkpoint=resume_from)
 
     # Save adapter
-    trainer.save_model(ADAPTER_PATH)
-    print(f"Adapter saved to {ADAPTER_PATH}")
+    trainer.save_model(SFT_ADAPTER_PATH)
+    print(f"Adapter saved to {SFT_ADAPTER_PATH}")
 
 
 if __name__ == "__main__":
