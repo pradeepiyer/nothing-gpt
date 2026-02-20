@@ -2,6 +2,7 @@
 
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import gradio as gr
 from openai import OpenAI
@@ -55,11 +56,17 @@ def web(prevent_thread_lock: bool = False) -> None:
             yield "Enter a premise.", "Enter a premise."
             return
 
-        yield "Generating Model A...", ""
-        sft_result = _generate_scene(client, premise, "seinfeld")
-        yield sft_result, "Generating Model B..."
-        dpo_result = _generate_scene(client, premise, "seinfeld-dpo")
-        yield sft_result, dpo_result
+        yield "Generating...", "Generating..."
+        results = {"seinfeld": "", "seinfeld-dpo": ""}
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = {
+                pool.submit(_generate_scene, client, premise, model): model
+                for model in results
+            }
+            for future in as_completed(futures):
+                model = futures[future]
+                results[model] = future.result()
+                yield results["seinfeld"] or "Generating...", results["seinfeld-dpo"] or "Generating..."
 
     with gr.Blocks(theme=gr.themes.Monochrome(), title="Nothing-GPT") as demo:
         gr.Markdown("# Nothing-GPT\nGenerate a Seinfeld scene from a premise.")
