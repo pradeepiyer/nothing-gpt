@@ -14,6 +14,8 @@ OUTPUT_DIR = "/vol/checkpoints/dpo-r32"
 
 
 def train(callbacks: list | None = None) -> None:
+    os.environ.setdefault("WANDB_PROJECT", "nothing-gpt-dpo")
+
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",

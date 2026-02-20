@@ -12,6 +12,8 @@ from nothing_gpt.constants import BASE_MODEL, SFT_ADAPTER_PATH, SFT_DATA_PATH
 
 
 def train(callbacks: list | None = None) -> None:
+    os.environ.setdefault("WANDB_PROJECT", "nothing-gpt-sft")
+
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
