@@ -5,14 +5,17 @@ import json
 import os
 import re
 
-from openai import AsyncOpenAI
+from openai import APIConnectionError, AsyncOpenAI
 
-from nothing_gpt.constants import DATA_PATH, DPO_DATA_PATH
+from nothing_gpt.constants import DPO_DATA_PATH, SFT_DATA_PATH
 
 SERVE_URL = os.environ.get("SERVE_URL", "http://nothing-gpt-serve:8000/v1")
-NUM_COMPLETIONS = 3
+NUM_COMPLETIONS = 5
 TEMPERATURE = 0.9
-BATCH_SIZE = 8
+MAX_CONCURRENT_PROMPTS = 32
+FLUSH_INTERVAL = 32
+MAX_RETRIES = 5
+RETRY_BASE_DELAY = 5
 
 
 def _parse_line(text: str) -> str | None:
@@ -21,29 +24,42 @@ def _parse_line(text: str) -> str | None:
     return text.strip() if match else None
 
 
-def load_prompts(val_path: str | None = None) -> list[list[dict]]:
-    """Load prompt message lists from val.jsonl."""
-    path = val_path or f"{DATA_PATH}/val.jsonl"
+def load_prompts(data_dir: str | None = None) -> list[list[dict]]:
+    """Load prompt message lists from train.jsonl and val.jsonl in data_dir."""
+    directory = data_dir or SFT_DATA_PATH
     prompts: list[list[dict]] = []
-    with open(path) as f:
-        for line in f:
-            row = json.loads(line)
-            prompts.append(row["prompt"])
+    for filename in ("train.jsonl", "val.jsonl"):
+        path = os.path.join(directory, filename)
+        if not os.path.exists(path):
+            continue
+        with open(path) as f:
+            for line in f:
+                row = json.loads(line)
+                prompts.append(row["prompt"])
     return prompts
 
 
 async def generate_completion(client: AsyncOpenAI, prompt: list[dict]) -> str:
     """Generate a single completion, filtering to valid [CHARACTER] lines."""
-    response = await client.chat.completions.create(
-        model="seinfeld",
-        messages=prompt,
-        max_tokens=256,
-        temperature=TEMPERATURE,
-        frequency_penalty=0.5,
-    )
-    text = response.choices[0].message.content or ""
-    lines = [_parse_line(line) for line in text.strip().split("\n")]
-    return "\n".join(line for line in lines if line)
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = await client.chat.completions.create(
+                model="seinfeld",
+                messages=prompt,
+                max_tokens=256,
+                temperature=TEMPERATURE,
+                frequency_penalty=0.5,
+            )
+            text = response.choices[0].message.content or ""
+            lines = [_parse_line(line) for line in text.strip().split("\n")]
+            return "\n".join(line for line in lines if line)
+        except APIConnectionError:
+            if attempt == MAX_RETRIES - 1:
+                raise
+            delay = RETRY_BASE_DELAY * (2**attempt)
+            print(f"Connection error, retrying in {delay}s (attempt {attempt + 1}/{MAX_RETRIES})", flush=True)
+            await asyncio.sleep(delay)
+    return ""  # unreachable, satisfies type checker
 
 
 async def generate_for_prompt(client: AsyncOpenAI, prompt: list[dict]) -> list[str]:
@@ -52,12 +68,12 @@ async def generate_for_prompt(client: AsyncOpenAI, prompt: list[dict]) -> list[s
     return list(await asyncio.gather(*tasks))
 
 
-async def _run(val_path: str | None = None, output_dir: str | None = None) -> None:
+async def _run(data_dir: str | None = None, output_dir: str | None = None) -> None:
     out_dir = output_dir or DPO_DATA_PATH
     os.makedirs(out_dir, exist_ok=True)
 
     client = AsyncOpenAI(base_url=SERVE_URL, api_key="not-needed", timeout=300)
-    prompts = load_prompts(val_path)
+    prompts = load_prompts(data_dir)
     total = len(prompts)
 
     # Resume from existing output
@@ -67,29 +83,36 @@ async def _run(val_path: str | None = None, output_dir: str | None = None) -> No
         with open(output_path) as f:
             already_done = sum(1 for _ in f)
     if already_done:
-        print(f"Resuming from {already_done}/{total}")
+        print(f"Resuming from {already_done}/{total}", flush=True)
 
-    with open(output_path, "a") as f:
-        for batch_start in range(already_done, total, BATCH_SIZE):
-            batch = prompts[batch_start : batch_start + BATCH_SIZE]
-            tasks = [generate_for_prompt(client, prompt) for prompt in batch]
-            results = await asyncio.gather(*tasks)
+    sem = asyncio.Semaphore(MAX_CONCURRENT_PROMPTS)
+    completed = 0
+    buffer: list[str] = []
 
-            for prompt, completions in zip(batch, results):
-                row = {"prompt": prompt, "completions": completions}
-                f.write(json.dumps(row) + "\n")
-            f.flush()
+    async def process_prompt(prompt: list[dict]) -> None:
+        nonlocal completed
+        async with sem:
+            completions = await generate_for_prompt(client, prompt)
+        buffer.append(json.dumps({"prompt": prompt, "completions": completions}))
+        completed += 1
+        if completed % FLUSH_INTERVAL == 0:
+            with open(output_path, "a") as f:
+                f.write("\n".join(buffer) + "\n")
+            buffer.clear()
+            print(f"[{already_done + completed}/{total}] prompts completed", flush=True)
 
-            done = min(batch_start + BATCH_SIZE, total)
-            print(f"[{done}/{total}] prompts completed")
+    await asyncio.gather(*(process_prompt(p) for p in prompts[already_done:]))
+    if buffer:
+        with open(output_path, "a") as f:
+            f.write("\n".join(buffer) + "\n")
 
-    print(f"Wrote {total} rows to {output_path}")
+    print(f"Wrote {total} rows to {output_path}", flush=True)
     await client.close()
 
 
-def generate_pairs(val_path: str | None = None, output_dir: str | None = None) -> None:
+def generate_pairs(data_dir: str | None = None, output_dir: str | None = None) -> None:
     """Generate NUM_COMPLETIONS completions per prompt and write completions.jsonl."""
-    asyncio.run(_run(val_path, output_dir))
+    asyncio.run(_run(data_dir, output_dir))
 
 
 if __name__ == "__main__":

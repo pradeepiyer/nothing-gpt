@@ -8,10 +8,12 @@ from peft import LoraConfig
 from transformers import BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
 
-from nothing_gpt.constants import ADAPTER_PATH, BASE_MODEL, DATA_PATH
+from nothing_gpt.constants import BASE_MODEL, SFT_ADAPTER_PATH, SFT_DATA_PATH
 
 
 def train(callbacks: list | None = None) -> None:
+    os.environ.setdefault("WANDB_PROJECT", "nothing-gpt-sft")
+
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
@@ -30,8 +32,8 @@ def train(callbacks: list | None = None) -> None:
     dataset = load_dataset(
         "json",
         data_files={
-            "train": f"{DATA_PATH}/train.jsonl",
-            "validation": f"{DATA_PATH}/val.jsonl",
+            "train": f"{SFT_DATA_PATH}/train.jsonl",
+            "validation": f"{SFT_DATA_PATH}/val.jsonl",
         },
     )
 
@@ -80,8 +82,8 @@ def train(callbacks: list | None = None) -> None:
     trainer.train(resume_from_checkpoint=resume_from)
 
     # Save adapter
-    trainer.save_model(ADAPTER_PATH)
-    print(f"Adapter saved to {ADAPTER_PATH}")
+    trainer.save_model(SFT_ADAPTER_PATH)
+    print(f"Adapter saved to {SFT_ADAPTER_PATH}")
 
 
 if __name__ == "__main__":

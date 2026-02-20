@@ -1,7 +1,7 @@
 """Run the full data pipeline: download → parse → format."""
 
 from nothing_gpt.data.download import download
-from nothing_gpt.data.format import format_dataset
+from nothing_gpt.sft.format import format_dataset
 from nothing_gpt.data.parse import parse_csv, save_dialogues
 
 

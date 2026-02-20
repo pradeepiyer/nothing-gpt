@@ -1,5 +1,5 @@
 from nothing_gpt.constants import SCRIPT_PROMPT
-from nothing_gpt.data.format import (
+from nothing_gpt.sft.format import (
     CONTEXT_TURNS,
     MIN_COMPLETION_TURNS,
     WINDOW_SIZE,

@@ -8,12 +8,14 @@ from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import DPOConfig, DPOTrainer
 
-from nothing_gpt.constants import ADAPTER_PATH, BASE_MODEL, DPO_ADAPTER_PATH, DPO_DATA_PATH
+from nothing_gpt.constants import ADAPTER_PATH, BASE_MODEL, DPO_DATA_PATH, SFT_ADAPTER_PATH
 
 OUTPUT_DIR = "/vol/checkpoints/dpo-r32"
 
 
 def train(callbacks: list | None = None) -> None:
+    os.environ.setdefault("WANDB_PROJECT", "nothing-gpt-dpo")
+
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
@@ -28,7 +30,7 @@ def train(callbacks: list | None = None) -> None:
     )
 
     # Load SFT adapter; DPOTrainer creates a frozen reference copy internally
-    model = PeftModel.from_pretrained(base_model, ADAPTER_PATH, is_trainable=True)
+    model = PeftModel.from_pretrained(base_model, SFT_ADAPTER_PATH, is_trainable=True)
     tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
 
     dataset = load_dataset(
@@ -51,15 +53,17 @@ def train(callbacks: list | None = None) -> None:
         max_length=2048,
         bf16=True,
         gradient_checkpointing=False,
-        lr_scheduler_type="cosine",
+        lr_scheduler_type="linear",
         warmup_steps=20,
         logging_steps=10,
         eval_strategy="steps",
-        eval_steps=25,
+        eval_steps=100,
         save_strategy="steps",
-        save_steps=25,
+        save_steps=100,
+        tf32=True,
+        dataloader_num_workers=2,
         report_to="wandb",
-        run_name="dpo-r32",
+        run_name="dpo-r32-linear",
     )
 
     trainer = DPOTrainer(
@@ -80,9 +84,9 @@ def train(callbacks: list | None = None) -> None:
 
     trainer.train(resume_from_checkpoint=resume_from)
 
-    # Save DPO adapter
-    trainer.save_model(DPO_ADAPTER_PATH)
-    print(f"DPO adapter saved to {DPO_ADAPTER_PATH}")
+    # Save adapter
+    trainer.save_model(ADAPTER_PATH)
+    print(f"Adapter saved to {ADAPTER_PATH}")
 
 
 if __name__ == "__main__":

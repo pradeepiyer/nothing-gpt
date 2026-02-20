@@ -6,17 +6,29 @@ import os
 import random
 import re
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, RateLimitError
 
 from nothing_gpt.constants import DPO_DATA_PATH
 
-JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "gemini-2.5-flash")
+JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "gemini-2.5-pro")
 VAL_RATIO = 0.1
 SEED = 42
-BATCH_SIZE = 16
+MAX_CONCURRENT = 50
+FLUSH_INTERVAL = 32
+MIN_CONFIDENCE = 3
+MAX_RETRIES = 5
+RETRY_BASE_DELAY = 2
 
-JUDGE_PROMPT = """\
-You are evaluating Seinfeld script completions. Below are 3 completions for the same prompt.
+
+def build_judge_prompt(completions: list[str]) -> str:
+    """Build a judge prompt for N completions."""
+    n = len(completions)
+    completion_blocks = "\n\n".join(
+        f"Completion {i + 1}:\n{c}" for i, c in enumerate(completions)
+    )
+    range_str = "|".join(str(i + 1) for i in range(n))
+    return f"""\
+You are evaluating Seinfeld script completions. Below are {n} completions for the same prompt.
 
 Rate them on faithfulness to Seinfeld scripts and characters:
 - Does the dialogue sound like it belongs in an actual Seinfeld episode?
@@ -24,37 +36,58 @@ Rate them on faithfulness to Seinfeld scripts and characters:
 George's neurotic complaints, Elaine's sarcasm, Kramer's physicality and wild ideas)?
 - Is the dialogue funny, coherent, and relevant to the scene context?
 
-Respond with ONLY a JSON object: {{"best": <1|2|3>, "worst": <1|2|3>}}
+Respond with ONLY a JSON object: {{"best": <{range_str}>, "worst": <{range_str}>, "confidence": <1-5>}}
+"confidence" rates how distinguishable the best and worst completions are \
+(1 = nearly identical quality, 5 = clear quality difference).
 Do not include any other text.
 
-Completion 1:
-{c1}
-
-Completion 2:
-{c2}
-
-Completion 3:
-{c3}"""
+{completion_blocks}"""
 
 
 async def rank_completions(
-    client: AsyncOpenAI, completions: list[str]
-) -> tuple[int, int]:
-    """Rank 3 completions via LLM judge. Returns (best_idx, worst_idx) as 0-based indices."""
-    prompt = JUDGE_PROMPT.format(c1=completions[0], c2=completions[1], c3=completions[2])
-    response = await client.chat.completions.create(
-        model=JUDGE_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0,
-        max_tokens=1024,
-    )
-    text = response.choices[0].message.content or ""
-    # Strip markdown code fences if present (e.g. ```json ... ```)
-    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-    if fence_match:
-        text = fence_match.group(1)
-    ranking = json.loads(text)
-    return int(ranking["best"]) - 1, int(ranking["worst"]) - 1
+    client: AsyncOpenAI, sem: asyncio.Semaphore, completions: list[str]
+) -> tuple[int, int, int] | None:
+    """Rank completions via LLM judge. Returns (best_idx, worst_idx, confidence) or None on failure."""
+    prompt = build_judge_prompt(completions)
+    for attempt in range(MAX_RETRIES):
+        try:
+            async with sem:
+                response = await client.chat.completions.create(
+                    model=JUDGE_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0,
+                    max_tokens=2048,
+                )
+            choice = response.choices[0]
+            text = (choice.message.content if choice.message else None) or ""
+            if not text.strip():
+                raise ValueError(f"Empty response from model (finish_reason={choice.finish_reason})")
+            # Strip markdown code fences if present (e.g. ```json ... ```)
+            fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+            if fence_match:
+                text = fence_match.group(1)
+            ranking = json.loads(text)
+            best_idx = int(ranking["best"]) - 1
+            worst_idx = int(ranking["worst"]) - 1
+            n = len(completions)
+            if not (0 <= best_idx < n and 0 <= worst_idx < n):
+                raise ValueError(f"Index out of range: best={best_idx}, worst={worst_idx}, n={n}")
+            if best_idx == worst_idx:
+                raise ValueError(f"best and worst are the same index: {best_idx}")
+            return best_idx, worst_idx, int(ranking["confidence"])
+        except RateLimitError as e:
+            delay = 30 * (attempt + 1)
+            print(f"Rate limited, retrying in {delay}s (attempt {attempt + 1}/{MAX_RETRIES}): {e}", flush=True)
+            await asyncio.sleep(delay)
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            if attempt == MAX_RETRIES - 1:
+                print(f"Failed to parse judge response after {MAX_RETRIES} attempts: {e}", flush=True)
+                return None
+            delay = RETRY_BASE_DELAY * (2**attempt)
+            print(f"Parse error, retrying in {delay}s (attempt {attempt + 1}/{MAX_RETRIES}): {e}", flush=True)
+            await asyncio.sleep(delay)
+    print(f"Failed after {MAX_RETRIES} attempts (rate limited)", flush=True)
+    return None
 
 
 def build_preference_pair(
@@ -73,7 +106,7 @@ async def _run(input_dir: str | None = None, output_dir: str | None = None) -> N
     out_dir = output_dir or DPO_DATA_PATH
     os.makedirs(out_dir, exist_ok=True)
 
-    client = AsyncOpenAI(timeout=120)
+    client = AsyncOpenAI(timeout=300)
 
     completions_path = os.path.join(data_dir, "completions.jsonl")
     rows: list[dict] = []
@@ -82,22 +115,60 @@ async def _run(input_dir: str | None = None, output_dir: str | None = None) -> N
             rows.append(json.loads(line))
 
     total = len(rows)
-    pairs: list[dict] = []
+    sem = asyncio.Semaphore(MAX_CONCURRENT)
+
+    # Resume from existing output
+    judged_path = os.path.join(out_dir, "judged.jsonl")
+    already_done = 0
+    if os.path.exists(judged_path):
+        with open(judged_path) as f:
+            already_done = sum(1 for _ in f)
+    if already_done:
+        print(f"Resuming from {already_done}/{total}", flush=True)
+
     print(f"Judging {total} rows with {JUDGE_MODEL}")
 
-    for batch_start in range(0, total, BATCH_SIZE):
-        batch = rows[batch_start : batch_start + BATCH_SIZE]
-        tasks = [rank_completions(client, row["completions"]) for row in batch]
-        rankings = await asyncio.gather(*tasks)
+    completed = 0
+    buffer: list[str] = []
 
-        for row, (best_idx, worst_idx) in zip(batch, rankings):
-            pair = build_preference_pair(row["prompt"], row["completions"], best_idx, worst_idx)
-            pairs.append(pair)
+    async def process_row(row: dict) -> None:
+        nonlocal completed
+        ranking = await rank_completions(client, sem, row["completions"])
+        if ranking is None:
+            buffer.append(json.dumps({"filtered": True}))
+        else:
+            best_idx, worst_idx, confidence = ranking
+            if confidence < MIN_CONFIDENCE:
+                buffer.append(json.dumps({"filtered": True}))
+            else:
+                pair = build_preference_pair(row["prompt"], row["completions"], best_idx, worst_idx)
+                buffer.append(json.dumps(pair))
+        completed += 1
+        if completed % FLUSH_INTERVAL == 0:
+            with open(judged_path, "a") as f:
+                f.write("\n".join(buffer) + "\n")
+            buffer.clear()
+            print(f"[{already_done + completed}/{total}] judged", flush=True)
 
-        done = min(batch_start + BATCH_SIZE, total)
-        print(f"[{done}/{total}] judged")
+    await asyncio.gather(*(process_row(row) for row in rows[already_done:]))
+    if buffer:
+        with open(judged_path, "a") as f:
+            f.write("\n".join(buffer) + "\n")
+    print(f"[{total}/{total}] judged", flush=True)
 
-    # Shuffle and split
+    # Load all judged pairs, filter, shuffle, and split
+    pairs: list[dict] = []
+    filtered_total = 0
+    with open(judged_path) as f:
+        for line in f:
+            row = json.loads(line)
+            if row.get("filtered"):
+                filtered_total += 1
+            else:
+                pairs.append(row)
+
+    print(f"Filtered {filtered_total}/{total} low-confidence pairs (confidence < {MIN_CONFIDENCE})")
+
     rng = random.Random(SEED)
     rng.shuffle(pairs)
     n_val = max(1, int(len(pairs) * VAL_RATIO))
