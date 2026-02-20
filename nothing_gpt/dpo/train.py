@@ -51,15 +51,17 @@ def train(callbacks: list | None = None) -> None:
         max_length=2048,
         bf16=True,
         gradient_checkpointing=False,
-        lr_scheduler_type="cosine",
+        lr_scheduler_type="linear",
         warmup_steps=20,
         logging_steps=10,
         eval_strategy="steps",
-        eval_steps=25,
+        eval_steps=100,
         save_strategy="steps",
-        save_steps=25,
+        save_steps=100,
+        tf32=True,
+        dataloader_num_workers=2,
         report_to="wandb",
-        run_name="dpo-r32",
+        run_name="dpo-r32-linear",
     )
 
     trainer = DPOTrainer(
