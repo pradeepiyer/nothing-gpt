@@ -55,9 +55,9 @@ def web(prevent_thread_lock: bool = False) -> None:
             yield "Enter a premise.", "Enter a premise."
             return
 
-        yield "Generating SFT...", ""
+        yield "Generating Model A...", ""
         sft_result = _generate_scene(client, premise, "seinfeld")
-        yield sft_result, "Generating DPO..."
+        yield sft_result, "Generating Model B..."
         dpo_result = _generate_scene(client, premise, "seinfeld-dpo")
         yield sft_result, dpo_result
 
@@ -71,9 +71,9 @@ def web(prevent_thread_lock: bool = False) -> None:
         generate_btn = gr.Button("Generate Scene", variant="primary")
         with gr.Row():
             with gr.Column():
-                sft_output = gr.Textbox(label="SFT", lines=20, interactive=False)
+                sft_output = gr.Textbox(label="Model A", lines=20, interactive=False)
             with gr.Column():
-                dpo_output = gr.Textbox(label="SFT + DPO", lines=20, interactive=False)
+                dpo_output = gr.Textbox(label="Model B", lines=20, interactive=False)
 
         generate_btn.click(
             fn=generate_comparison, inputs=premise_input, outputs=[sft_output, dpo_output],
