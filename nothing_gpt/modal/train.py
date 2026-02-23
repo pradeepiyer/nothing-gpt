@@ -18,7 +18,7 @@ VOLUMES = {
     volumes=VOLUMES,
     timeout=86400,
     secrets=[
-        modal.Secret.from_name("huggingface-secret"),
+        modal.Secret.from_name("hf-secret"),
         modal.Secret.from_name("wandb-secret"),
     ],
 )

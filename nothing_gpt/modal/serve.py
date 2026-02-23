@@ -19,7 +19,7 @@ VOLUMES = {
     timeout=600,
     scaledown_window=900,
     max_containers=1,
-    secrets=[modal.Secret.from_name("huggingface-secret")],
+    secrets=[modal.Secret.from_name("hf-secret")],
 )
 @modal.concurrent(max_inputs=32)
 @modal.web_server(port=8000, startup_timeout=600)

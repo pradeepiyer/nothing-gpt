@@ -35,7 +35,7 @@ uv sync
 
 **Modal secrets:**
 ```bash
-uv run modal secret create huggingface-secret HF_TOKEN=<token>
+uv run modal secret create hf-secret HF_TOKEN=<token>
 uv run modal secret create wandb-secret WANDB_API_KEY=<key>
 uv run modal secret create gemini-secret GEMINI_API_KEY=<key>
 ```
