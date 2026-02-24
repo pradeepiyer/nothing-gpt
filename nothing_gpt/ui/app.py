@@ -2,8 +2,10 @@
 
 import os
 import re
+import threading
 
 import gradio as gr
+import requests
 from openai import OpenAI
 
 from nothing_gpt.constants import SCRIPT_PROMPT
@@ -48,7 +50,18 @@ def _generate_scene(client: OpenAI, premise: str) -> str:
     return "\n".join(scene_lines)
 
 
+def _wake_serve(base_url: str) -> None:
+    """Ping the serve endpoint to wake the GPU container."""
+    try:
+        api_url = base_url.removesuffix("/v1")
+        requests.get(f"{api_url}/health", timeout=300)
+    except Exception:
+        pass
+
+
 def web(prevent_thread_lock: bool = False) -> None:
+    threading.Thread(target=_wake_serve, args=(SERVE_URL,), daemon=True).start()
+
     client = OpenAI(base_url=SERVE_URL, api_key="not-needed", timeout=300)
 
     def generate(premise: str):  # type: ignore[no-untyped-def]
@@ -56,7 +69,7 @@ def web(prevent_thread_lock: bool = False) -> None:
             yield "Enter a premise."
             return
 
-        yield "Generating..."
+        yield "Generating... (first request may take a few minutes while the model loads)"
         yield _generate_scene(client, premise)
 
     with gr.Blocks(theme=gr.themes.Monochrome(), title="Nothing-GPT") as demo:

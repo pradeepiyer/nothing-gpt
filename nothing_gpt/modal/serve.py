@@ -14,10 +14,10 @@ VOLUMES = {
 
 @app.function(
     image=serve_image,
-    gpu="L4",
+    gpu="T4",
     volumes=VOLUMES,
     timeout=600,
-    scaledown_window=900,
+    scaledown_window=300,
     max_containers=1,
     secrets=[modal.Secret.from_name("hf-secret")],
 )
