@@ -46,7 +46,7 @@ def train(callbacks: list | None = None) -> None:
         beta=0.1,
         loss_type="sigmoid",
         learning_rate=5e-6,
-        num_train_epochs=1,
+        num_train_epochs=2,
         per_device_train_batch_size=2,
         per_device_eval_batch_size=1,
         gradient_accumulation_steps=8,
@@ -63,7 +63,7 @@ def train(callbacks: list | None = None) -> None:
         tf32=True,
         dataloader_num_workers=2,
         report_to="wandb",
-        run_name="dpo-r32-linear",
+        run_name="dpo-r32-2ep",
     )
 
     trainer = DPOTrainer(
